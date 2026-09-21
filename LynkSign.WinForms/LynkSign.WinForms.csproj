@@ -1,0 +1,114 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    ============================================================
+     领克自动签到 · Windows 桌面版 (WinForms)
+    ============================================================
+     本仓库**只有这一个可执行项目**（Web 配置中心版已废弃删除）。
+     业务源码全部位于 Shared/ 下，由 SDK 默认通配自动纳入编译：
+
+       Shared/Configuration   AppConfig / ConfigStore
+       Shared/Infrastructure  路径 / 时间 / JSON 扩展 / 代理 / 浏览器启动 / 三态配置项
+       Shared/Logging         IJobLogger
+       Shared/Lynk            接口客户端 / 签名 / 通道 profile / 令牌缓存
+       Shared/Push            多渠道推送
+       Shared/Scheduling      cron 解析与调度器
+       Shared/Services        任务编排（SignJob / SignJobRunner / CliOptions …）
+
+     历史：这些文件原先住在 src/LynkSign（Kestrel + 网页配置中心），
+     桌面版靠逐文件 Compile Link 复用；Web 版删除后已整体搬进来，
+     原先那 30 行 Compile Link 也随之删除 —— 不再有"两份代码跑偏"的可能。
+
+     桌面版自己独有的实现（不入 Shared）：
+       App/WinAutostart.cs —— 需要传 minimized 参数静默进托盘，与 Web 版的注册表写法不同
+  -->
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>LynkSign.WinForms</RootNamespace>
+    <AssemblyName>LynkSignGUI</AssemblyName>
+
+    <!-- 中文 UI + 时区换算需要完整文化数据 -->
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <SatelliteResourceLanguages>zh-Hans;en</SatelliteResourceLanguages>
+
+    <!-- 图标复用原项目 tools/make-icon.py 生成的那一份 -->
+    <ApplicationIcon>app.ico</ApplicationIcon>
+
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+
+    <!--
+      WFO1000：.NET 10 新增的 WinForms 分析器，要求控件的公开属性声明设计器序列化方式。
+      本项目界面**全部用代码搭建**，没有 .Designer.cs / .resx，也不打算用设计器，
+      因此这类"给设计器看"的元数据没有意义，直接关掉，避免每个属性都挂一行特性。
+    -->
+    <NoWarn>$(NoWarn);CS1591;WFO1000</NoWarn>
+  </PropertyGroup>
+
+  <!-- exe 版本信息（右键属性 → 详细信息 里可见） -->
+  <PropertyGroup>
+    <Version>1.0.0</Version>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <Product>领克自动签到</Product>
+    <AssemblyTitle>领克 APP 自动签到（桌面版）</AssemblyTitle>
+    <Description>领克 APP 自动签到 · Windows 桌面版 · 托盘常驻 + cron 定时调度 + 实时日志</Description>
+    <Company>LynkSign</Company>
+    <Copyright>MIT License</Copyright>
+  </PropertyGroup>
+
+  <!--
+    发布形态说明：
+    刻意**不用** PublishSingleFile。
+    WinForms 的自包含单文件每次启动都要把 native 依赖解压到临时目录，
+    冷启动会多出好几秒；而安装包本来就由 Inno Setup 压成 LZMA2（安装时解压一次），
+    所以「多文件目录 + 安装包压缩」才是桌面应用启动最快的组合。
+  -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release' And $(RuntimeIdentifier.StartsWith('win'))">
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>false</PublishSingleFile>
+    <DebugType>none</DebugType>
+    <EnableCompressionInSingleFile>false</EnableCompressionInSingleFile>
+  </PropertyGroup>
+
+  <!--
+    业务源码（Shared/）不再逐文件 Compile Link —— 它们就在本项目目录下，
+    由 SDK 默认的 **\*.cs 通配自动纳入。之前那 30 行 Link 是 Web 版还在时的过渡方案。
+  -->
+  <ItemGroup Label="排除 IDE 自动生成的空 .resx（兜底在 Directory.Build.targets）">
+    <!--
+      本项目界面全部手写，不使用 .resx。IDE 在「打开窗体」时会顺手生成空的
+      Forms/MainForm.resx，而这个文件会直接把编译打挂（MSB3577）。
+
+      真实成因不是"同名文件被收了两遍"，而是**清单资源名撞车**：
+      同目录存在 MainForm.cs 时，SDK 默认的 EmbeddedResourceUseDependentUponConvention
+      会把 Forms\MainForm*.resx 全部算成同一个 ManifestResourceName：
+          Forms\MainForm.resx        -> LynkSign.WinForms.Forms.MainForm
+          Forms\MainForm.Logic.resx  -> LynkSign.WinForms.Forms.MainForm
+          Forms\MainForm.Diag.resx   -> LynkSign.WinForms.Forms.MainForm
+      GenerateResource 拿它拼输出路径，三个来源于是写同一个
+      obj\...\LynkSign.WinForms.Forms.MainForm.resources → MSB3577。
+
+      这里先排一道；但 IDE 会在 .csproj 末尾追加 <EmbeddedResource Include="Forms\*.resx"/>，
+      能把这句 Remove 顶掉，所以真正的兜底放在 Directory.Build.targets（它在项目体之后导入）。
+    -->
+    <Compile Remove="dist\**" />
+    <EmbeddedResource Remove="dist\**" />
+    <EmbeddedResource Remove="Forms\**\*.resx" />
+    <None Remove="dist\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.12" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.12" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.12" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.12" />
+  </ItemGroup>
+
+</Project>

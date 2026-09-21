@@ -1,0 +1,32 @@
+# 含真实 token, 不要提交 (用 config.example.json 作为模板)
+config.json
+config.json.tmp
+data/
+logs/
+.lynk_access_token.json
+
+# 从 App 运行时提取的 AppSecret（同样属于凭据，勿入库）
+lynkco-secret.json
+
+# ---- .NET 构建产物 ----
+bin/
+obj/
+*.user
+
+# ---- Windows 打包产物 ----
+dist/
+
+# 缓存 / 临时
+__pycache__/
+*.pyc
+*.zip
+.claude/
+.vs/
+
+# ---- 第三方参考仓库（只作对照，不入库）----
+/reference/LynkCoHelper-main
+
+# ---- 开发辅助脚本（本机工具，不入库）----
+/tools
+/reference
+/.workbuddy

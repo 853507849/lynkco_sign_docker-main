@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" role="img" aria-label="H app icon, dark">
+  <title>H app icon, dark</title>
+  <desc>Deep navy rounded squircle with a teal to blue gradient letter H, for dark mode.</desc>
+  <defs>
+    <linearGradient id="markNight" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5EEAD4"/>
+      <stop offset="1" stop-color="#60A5FA"/>
+    </linearGradient>
+  </defs>
+  <path d="M232,0 L792,0 C954,0 1024,70 1024,232 L1024,792 C1024,954 954,1024 792,1024 L232,1024 C70,1024 0,954 0,792 L0,232 C0,70 70,0 232,0 Z" fill="#0B1220"/>
+  <g fill="url(#markNight)">
+    <rect x="272" y="248" width="118" height="528" rx="24"/>
+    <rect x="634" y="248" width="118" height="528" rx="24"/>
+    <rect x="390" y="453" width="244" height="118" rx="24"/>
+  </g>
+</svg>

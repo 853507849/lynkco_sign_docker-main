@@ -1,0 +1,8 @@
+<Solution>
+  <!--
+    唯一可执行项目：Windows 桌面版（WinForms），2026-09-21 从 src/ 提到仓库根目录。
+    Web 配置中心版（原 src/LynkSign，Kestrel + wwwroot 配置页）已删除；
+    原 Python 实现（ql_lynk.py / config_server.py 等）已移到 reference/python/ 仅作对照。
+  -->
+  <Project Path="LynkSign.WinForms/LynkSign.WinForms.csproj" />
+</Solution>

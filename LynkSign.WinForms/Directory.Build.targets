@@ -1,0 +1,46 @@
+<Project>
+
+  <!--
+    ============================================================
+     兜底：丢掉 IDE 顺手生成的 .resx
+    ============================================================
+     为什么放在 Directory.Build.targets 而不是 .csproj：
+     Directory.Build.targets 是在**项目体之后**才被导入的，所以无论 IDE 往
+     .csproj 末尾追加多少 <EmbeddedResource Include="Forms\MainForm.resx" />，
+     这里最后这一句 Remove 都能把它们清掉。（csproj 里那句 Remove 挡不住这种追加。）
+
+     为什么非清不可 —— MSB3577 的真实成因（已实测，不是猜的）：
+
+       本项目 RootNamespace = LynkSign.WinForms，界面全部手写，正常一个 .resx 都不该有。
+       IDE 打开窗体时会在 Forms\ 下生成：
+           Forms\MainForm.resx
+           Forms\MainForm.Logic.resx
+           Forms\MainForm.Diag.resx
+
+       而 SDK 默认 EmbeddedResourceUseDependentUponConvention = true 时，
+       CreateCSharpManifestResourceName 任务会因为同目录存在 MainForm.cs，
+       把这三个 resx 全部算成**同一个清单资源名**：
+
+           Forms\MainForm.resx        -> LynkSign.WinForms.Forms.MainForm
+           Forms\MainForm.Logic.resx  -> LynkSign.WinForms.Forms.MainForm
+           Forms\MainForm.Diag.resx   -> LynkSign.WinForms.Forms.MainForm
+
+       GenerateResource 再用它拼输出路径
+       （Microsoft.Common.CurrentVersion.targets: OutputResources="...%(ManifestResourceName).resources"），
+       三个来源于是写同一个文件：
+           obj\Debug\net10.0-windows\LynkSign.WinForms.Forms.MainForm.resources
+       -> error MSB3577「两个输出文件名解析为同一个输出路径」。
+
+       坑点：报错读起来像"同一个文件被项目收了两遍"，但 .csproj 里每个 resx
+       其实只出现一次 —— 撞的是**算出来的清单资源名**，不是文件路径。
+       所以千万别往"去重 Include"的方向查，查不出来。
+
+     排查手法（把 MSBuild 实际算出的元数据打出来）已收进 skill
+     dotnet-winforms-desktop-packaging，搜 MSB3577。
+  -->
+
+  <ItemGroup>
+    <EmbeddedResource Remove="Forms\**\*.resx" />
+  </ItemGroup>
+
+</Project>
