@@ -1,7 +1,5 @@
 # 领克 APP 自动签到 · Windows 桌面版（.NET 10）
 
-支持下原作者：https://github.com/sy5t4w-del/lynk_auto_sign
-
 一个 **Windows 桌面小程序**：托盘常驻、cron 定时调度、可视化配置、实时运行日志。
 点击「立即运行」或在设定的时间自动帮你完成领克 APP 的每日签到，并把结果推到企业微信 / 钉钉 / 飞书等渠道。
 
@@ -12,10 +10,6 @@
 > **本仓库只有桌面版一个可执行项目。** 原先的 Web 配置中心版（`src/LynkSign`，Kestrel + `wwwroot/config.html`）
 > 已连同 `Dockerfile` / `docker-compose.yml` / 根目录 `config.html` / `dist` 一起删除。
 >
-> 原 **Python 实现**已移到 `reference/python/`（`ql_lynk.py` / `config_server.py` /
-> `README.python.md` / `Dockerfile.python` / `docker-compose.python.yml`），仅作迁移前后的逐行对照，
-> 不参与 .NET 版构建，也不在解决方案里。第三方参考仓库（如 `LynkCoHelper-main`）同样收在 `reference/` 下。
-
 ## ✨ 功能特性
 
 - 🖥️ **桌面界面**：「运行状态 / 配置」两个页签，改完点保存即生效，无需编辑 JSON
@@ -114,15 +108,6 @@ lynk_sign_docker-main/
 │   │   ├── installer.iss                #   Inno Setup 脚本
 │   │   └── ChineseSimplified.isl        #   中文向导语言文件
 │   └── dist/                            # 发布与安装包输出（不入库）
-├── reference/                           # ☆ 参考与留档（不参与构建，不在解决方案里）
-│   ├── python/                          #   原 Python 实现，仅作迁移前后的逐行对照
-│   │   ├── ql_lynk.py                   #     签到核心脚本
-│   │   ├── config_server.py             #     Web 配置页 + cron 调度 + 日志服务
-│   │   ├── Dockerfile.python / docker-compose.python.yml
-│   │   ├── requirements.txt             #     Python 依赖（仅 requests）
-│   │   ├── README.python.md             #     原 Python 版说明
-│   │   └── server.log                   #     旧 Web 服务的运行日志（留档）
-│   └── LynkCoHelper-main/               #   第三方参考仓库（不入库）
 ├── config.example.json                  # 配置模板
 ├── config.json                          # 开发用配置（含真实 token，已被 .gitignore 忽略）
 ├── lynkco-secret.json                   # 原生通道密钥提取结果（明文，勿外传）
