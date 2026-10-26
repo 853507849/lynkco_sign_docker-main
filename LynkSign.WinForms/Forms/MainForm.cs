@@ -85,6 +85,22 @@ internal sealed partial class MainForm : Form
     private Label _valRefresh = null!;
     private Label _valLast = null!;
 
+    // ----- 状态页：账户积分（四个值来自日志里的账户行，见 AccountLine） -----
+    private Label _valPoint = null!;
+    private Label _valIncome = null!;
+    private Label _valLevel = null!;
+    private Label _valGrowth = null!;
+
+    // ----- 状态页：积分变化（读数据目录的 points-history.log） -----
+    private RichTextBox _pointsBox = null!;
+
+    /// <summary>
+    /// 上次读到的积分历史文件指纹（时间戳 ^ 长度）。
+    /// 状态刷新是每 2 秒一轮，靠它判断「文件没动就别重读、别重绘」—— 否则每 2 秒
+    /// 清空重画一次列表，用户滚动到一半会被弹回顶部。
+    /// </summary>
+    private long _pointsStamp = long.MinValue;
+
     // ----- 标题栏状态胶囊 -----
     private StatusPill _pillState = null!;
 
@@ -354,15 +370,98 @@ internal sealed partial class MainForm : Form
         };
         stack.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
         stack.RowStyles.Add(new RowStyle(SizeType.Absolute, MetricCard.Height1Line + CardGap));
-        stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 124 + CardGap));
+        stack.RowStyles.Add(new RowStyle(SizeType.Absolute, PlanRowHeight + CardGap));
         stack.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
 
         stack.Controls.Add(BuildMetricRow(), 0, 0);
-        stack.Controls.Add(BuildPlanCard(), 0, 1);
-        stack.Controls.Add(BuildLogCard(), 0, 2);
+        stack.Controls.Add(BuildPlanAndAccountRow(), 0, 1);
+        stack.Controls.Add(BuildPointsAndLogRow(), 0, 2);
 
         page.Controls.Add(stack);
         return page;
+    }
+
+    /// <summary>
+    /// 「运行计划 / 账户积分」这一行的高度。
+    ///
+    /// <para>
+    /// 不能拍脑袋给 —— 卡里是 <b>4 行 9pt 中文</b>（账户积分那侧），每行实测要 24 设备像素，
+    /// 再加上卡片的标题带（32）与上下留白（16×2），164 是这个组合的下限。
+    /// 给少了不会报错，只表现为几行文字互相压在一起（自绘布局的典型静默故障）。
+    /// </para>
+    /// </summary>
+    private const int PlanRowHeight = 164;
+
+    /// <summary>
+    /// 「运行计划」与「账户积分」并排一行。
+    ///
+    /// <para>
+    /// 并排而不是各占一行：状态页的纵向空间是刚性的 —— 窗口可以缩到 680 逻辑像素高，
+    /// 那点高度要分给四张指标卡、这两块卡和日志区。两块卡各自只有 3~4 行文字，
+    /// 横向排开正好，凭空多占一整行只会把日志区压成一条缝。
+    /// </para>
+    /// </summary>
+    private Control BuildPlanAndAccountRow()
+    {
+        var row = NewCardRow();
+
+        var plan = BuildPlanCard();
+        plan.Margin = new Padding(0, 0, CardGap / 2, 0);
+
+        var account = BuildAccountPointsCard();
+        account.Margin = new Padding(CardGap / 2, 0, 0, 0);
+
+        row.Controls.Add(plan, 0, 0);
+        row.Controls.Add(account, 1, 0);
+        return row;
+    }
+
+    /// <summary>
+    /// 「积分变化」与「运行日志」并排一行。
+    ///
+    /// 日志卡保住了它的绝对高度（这一行仍占满剩余空间），只是窄了一些；
+    /// 代价换来的是一块只增不减的积分轨迹 —— 而它恰好是最该长期盯着的东西。
+    /// </summary>
+    private Control BuildPointsAndLogRow()
+    {
+        var row = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 2,
+            RowCount = 1,
+            BackColor = Theme.PageBg,
+            Margin = Padding.Empty,
+        };
+        // 40 : 60 是量出来的：左边要装下「10-13 09:06  +5 积分 → 123  +5 成长值 → 460  手动」
+        // 一行不折（一行折了，这个列表就没法扫读了），右边的日志区又尽量别太窄。
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 40F));
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 60F));
+
+        var points = BuildPointsHistoryCard();
+        points.Margin = new Padding(0, 0, CardGap / 2, 0);
+
+        var log = BuildLogCard();
+        log.Margin = new Padding(CardGap / 2, 0, 0, 0);
+
+        row.Controls.Add(points, 0, 0);
+        row.Controls.Add(log, 1, 0);
+        return row;
+    }
+
+    /// <summary>两列等宽的卡片行（纵向间距由行本身负责，卡片只管左右留白）。</summary>
+    private static TableLayoutPanel NewCardRow()
+    {
+        var row = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 2,
+            RowCount = 1,
+            BackColor = Theme.PageBg,
+            Margin = new Padding(0, 0, 0, CardGap),
+        };
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
+        return row;
     }
 
     private Control BuildMetricRow()
@@ -414,7 +513,8 @@ internal sealed partial class MainForm : Form
             Dock = DockStyle.Fill,
             Title = "运行计划",
             AccentColor = Theme.Accent,
-            Margin = new Padding(0, 0, 0, CardGap),
+            // 纵向间距由外层那一行负责（卡片自己再留就成了双份）
+            Margin = Padding.Empty,
         };
 
         var grid = new TableLayoutPanel
@@ -443,6 +543,96 @@ internal sealed partial class MainForm : Form
         grid.Controls.Add(_valLast, 1, 2);
 
         card.Controls.Add(grid);
+        return card;
+    }
+
+    /// <summary>
+    /// 「账户积分」卡片：积分余额 / 累计获得 / 成长等级 / 成长值。
+    ///
+    /// <para>
+    /// 数据源是日志里的<b>账户行</b>（见 <see cref="AccountLine"/>），由
+    /// <c>MainForm.Logic</c> 解析后填进来 —— 与顶部三张状态卡同一个套路：
+    /// 手动触发、cron 触发、每天 00:01 的只读刷新都能刷到它，不必给签到流程加回传通道。
+    /// 重启后先从 <c>points-history.log</c> 恢复，所以刚开机也能看到上次的积分。
+    /// </para>
+    /// </summary>
+    private Control BuildAccountPointsCard()
+    {
+        var card = new CardPanel
+        {
+            Dock = DockStyle.Fill,
+            Title = "账户积分",
+            Note = "积分 / 成长，每次运行后刷新",
+            AccentColor = Theme.Accent,
+            Margin = Padding.Empty,
+        };
+
+        var grid = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 2,
+            RowCount = 4,
+            BackColor = Theme.CardBg,
+        };
+        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 88F));
+        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+        for (var i = 0; i < 4; i++) grid.RowStyles.Add(new RowStyle(SizeType.Percent, 25F));
+
+        // 首行用强调色：一眼看到的是「我有多少积分」，其余三项是它的注解
+        _valPoint = NewValueLabel(Theme.TextStrong);
+        _valIncome = NewValueLabel(Theme.TextBody);
+        _valLevel = NewValueLabel(Theme.TextBody);
+        _valGrowth = NewValueLabel(Theme.TextBody);
+
+        grid.Controls.Add(NewCaptionLabel("积分余额"), 0, 0);
+        grid.Controls.Add(_valPoint, 1, 0);
+        grid.Controls.Add(NewCaptionLabel("累计获得"), 0, 1);
+        grid.Controls.Add(_valIncome, 1, 1);
+        grid.Controls.Add(NewCaptionLabel("成长等级"), 0, 2);
+        grid.Controls.Add(_valLevel, 1, 2);
+        grid.Controls.Add(NewCaptionLabel("成长值"), 0, 3);
+        grid.Controls.Add(_valGrowth, 1, 3);
+
+        card.Controls.Add(grid);
+        return card;
+    }
+
+    /// <summary>
+    /// 「积分变化」卡片：逐条列出<b>有增减</b>的积分/成长值变化（数据来自
+    /// 数据目录的 <c>points-history.log</c>）。
+    ///
+    /// <para>
+    /// 用只读 RichTextBox 而不是一堆 Label：条数会一直长，而这块卡的高度是固定的，
+    /// 需要一个自己会滚动的容器。也顺带能按增减着色（涨绿、跌红）。
+    /// </para>
+    /// </summary>
+    private Control BuildPointsHistoryCard()
+    {
+        var card = new CardPanel
+        {
+            Dock = DockStyle.Fill,
+            Title = "积分变化",
+            Note = "只列有增减的记录",
+            AccentColor = Theme.Accent,
+            Margin = Padding.Empty,
+        };
+
+        _pointsBox = new RichTextBox
+        {
+            Dock = DockStyle.Fill,
+            ReadOnly = true,
+            BorderStyle = BorderStyle.None,
+            BackColor = Theme.CardBg,
+            ForeColor = Theme.TextBody,
+            Font = Theme.Small,
+            DetectUrls = false,
+            WordWrap = true,
+            ScrollBars = RichTextBoxScrollBars.Vertical,
+            HideSelection = false,
+            TabStop = false,
+        };
+
+        card.Controls.Add(_pointsBox);
         return card;
     }
 
@@ -1204,6 +1394,14 @@ internal sealed partial class MainForm : Form
         // 不必再让 SignJob 额外回传结构化结果（那样就得改原项目了）。
         var match = StatusPattern.Match(line);
         if (match.Success) ApplySignStatus(match);
+
+        // 账户行同理，喂「账户积分」那张卡。先用 Contains 粗筛一次：
+        // 一次运行能刷出上百行日志，而每行都跑一遍正则纯属浪费。
+        if (line.Contains(AccountLine.Prefix, StringComparison.Ordinal)
+            && AccountLine.Parse(line) is { } account)
+        {
+            ApplyAccount(account);
+        }
     }
 
     private void FlushLogQueue()

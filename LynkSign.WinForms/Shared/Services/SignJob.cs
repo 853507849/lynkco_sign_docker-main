@@ -88,13 +88,15 @@ public sealed class SignJob
     private readonly TokenManager _tokens;
     private readonly PushService _push;
     private readonly ConfigStore _config;
+    private readonly PointsHistoryStore _points;
 
-    public SignJob(LynkApiClient api, TokenManager tokens, PushService push, ConfigStore config)
+    public SignJob(LynkApiClient api, TokenManager tokens, PushService push, ConfigStore config, PointsHistoryStore points)
     {
         _api = api;
         _tokens = tokens;
         _push = push;
         _config = config;
+        _points = points;
     }
 
     public async Task<int> RunAsync(SignJobOptions options, IJobLogger log, CancellationToken ct = default, string trigger = "manual")
@@ -255,7 +257,8 @@ public sealed class SignJob
             growthValue = level.DisplayProp("growth");
         }
 
-        log.Ok($"账户: Co积分={energyPoint}  累计获得={energyIncome}  等级={growthName}  能量体={growthValue}");
+        // 这行同时也是界面「账户积分」卡片的数据源，格式与正则统一在 AccountLine 里（别在这里手拼字符串）。
+        log.Ok(AccountLine.Build(energyPoint, energyIncome, growthName, growthValue, "签到前"));
 
 
         // ---- 2c. 签到任务进度 ----
@@ -405,7 +408,7 @@ public sealed class SignJob
                 growthValue = after.GrowthValue;
             }
 
-            log.Ok($"账户(复核): {after.AccountLine()}");
+            log.Ok(AccountLine.Build(energyPoint, energyIncome, growthName, growthValue, "签到后复核"));
             log.Ok(SignStatusLine.Build(signedNow, "签到后复核", streak, signCard));
 
             if (after.EnergyOk && after.GrowthOk && energyPoint == preEnergy && growthValue == preGrowth)
@@ -414,6 +417,15 @@ public sealed class SignJob
                 log.Warn("        可能是后端奖励尚未入账, 推送里显示的是本次复核到的值");
             }
         }
+
+        // ==================== 3c) 记录积分变化 ====================
+        // 界面上「账户积分」卡与「积分变化」卡都吃这一条记录：
+        // 前者要的是「当前值」，后者要的是与上一次的差。放在这里而不是第 2 步，
+        // 是因为首次签到会让积分/成长值真的变化 —— 在签到之前记，记到的永远是变化前的数。
+        //
+        // 已签到时走不到 3b，用的就是第 2 步那个快照：数值虽然「不是签到带来的」，
+        // 但它是当天第一次看到的真实值，照样值得作为基线记下来。
+        RecordPoints(trigger, alreadySigned, energyPoint, energyIncome, growthName, growthValue, log);
 
         markdown.Add($"**签到**: {signStatusText}");
         markdown.Add($"**奖励**: {rewardText}");
@@ -597,6 +609,35 @@ public sealed class SignJob
         log.Info($"[推送] {await PushAsync(title, markdownText, options, ct).ConfigureAwait(false)}");
         log.Ok("全部完成");
         return 0;
+    }
+
+    // ==================== 积分变化记录 ====================
+
+    /// <summary>
+    /// 把本次看到的账户数值记进积分变化历史，并在日志里打一行摘要。
+    ///
+    /// <para>
+    /// 四项全是 <c>"-"</c>（账户接口一个都没通）时<b>不记</b>：那种记录只有噪音，
+    /// 还会把「上一次有值」的记录挤成「不是最后一次」，让下一次比较失去基线。
+    /// </para>
+    /// </summary>
+    private void RecordPoints(
+        string trigger, bool alreadySigned,
+        string point, string income, string level, string growth,
+        IJobLogger log)
+    {
+        var account = new AccountSnapshot
+        {
+            Point = point,
+            Income = income,
+            Level = level,
+            Growth = growth,
+            Origin = alreadySigned ? "已签到 (未复核)" : "签到后复核",
+        };
+
+        if (!account.HasNumbers) return;
+
+        log.Ok(PointsHistoryStore.DescribeChange(_points.Observe(trigger, account)));
     }
 
     // ==================== 分享任务 ====================

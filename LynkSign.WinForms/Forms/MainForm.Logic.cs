@@ -50,6 +50,7 @@ internal sealed partial class MainForm
         LoadConfigIntoForm();
         EnqueueLog($"[INFO] 出站网络: {_host.NetworkMode}");
         RestoreStatusFromLatestLog();
+        RefreshPoints(force: true);
         RefreshStatus();
         StartScheduler();
 
@@ -727,6 +728,10 @@ internal sealed partial class MainForm
 
             _sbState.Text = state.Running ? "运行中…" : "就绪";
             _btnRunNow.Enabled = !state.Running;
+
+            // 积分历史是文件驱动的（签到流程与每日刷新都会往里追加），
+            // 靠文件指纹判断要不要重读 —— 没变就一个字节都不碰。
+            RefreshPoints();
         }
         catch
         {
@@ -734,24 +739,46 @@ internal sealed partial class MainForm
         }
     }
 
-    /// <summary>启动时从最新一份日志里恢复「今天签没签」，这样重启程序也能看到上次结果。</summary>
+    /// <summary>
+    /// 启动时从最近的日志里恢复「今天签没签」与账户数值，这样重启程序也能看到上次结果。
+    ///
+    /// <para>
+    /// 从最新一份往回找，<b>找到第一份含状态行的就用</b>，而不是只看最新那一份 ——
+    /// 一次失败的运行（比如 token 过期）也会落一份日志，里面只有「拿不到 accessToken」；
+    /// 只看最新就会让卡片在重启后空成一片「—」，而更早那份日志里的状态其实还好好的。
+    /// </para>
+    /// </summary>
     private void RestoreStatusFromLatestLog()
     {
+        const int scanLimit = 10;   // 一次启动最多回看这么多份，避免日志多时白读一堆文件
+
         try
         {
-            var latest = _host.Logs.List().FirstOrDefault();
-            if (latest is null) return;
+            foreach (var item in _host.Logs.List().Take(scanLimit))
+            {
+                var path = Path.Combine(_host.Logs.Dir, item.Name);
+                using var stream = new FileStream(path, FileMode.Open, FileAccess.Read,
+                    FileShare.ReadWrite | FileShare.Delete);
+                using var reader = new StreamReader(stream, Encoding.UTF8);
 
-            var path = Path.Combine(_host.Logs.Dir, latest.Name);
-            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-            using var reader = new StreamReader(stream, Encoding.UTF8);
+                var text = reader.ReadToEnd();
 
-            var text = reader.ReadToEnd();
-            var matches = StatusPattern.Matches(text);
-            if (matches.Count == 0) return;
+                // 一次运行里「签到前 / 签到后复核」可能各打一条，后打的才反映签到后的真实状态
+                var matches = StatusPattern.Matches(text);
+                if (matches.Count == 0) continue;   // 这份日志里没有签到状态，往前再找一份
 
-            ApplySignStatus(matches[^1]);
-            EnqueueLog($"[INFO] 已从 {latest.Name} 恢复上次签到状态");
+                ApplySignStatus(matches[^1]);
+
+                // 账户行同理（取最后一条 = 复核后的那次）
+                var accountMatches = AccountLine.Pattern.Matches(text);
+                if (accountMatches.Count > 0 && AccountLine.Parse(accountMatches[^1].Value) is { } account)
+                {
+                    ApplyAccount(account);
+                }
+
+                EnqueueLog($"[INFO] 已从 {item.Name} 恢复上次签到状态");
+                return;
+            }
         }
         catch
         {
@@ -795,6 +822,203 @@ internal sealed partial class MainForm
     }
 
     // ==================================================================
+    //  账户积分 / 积分变化
+    // ==================================================================
+
+    /// <summary>
+    /// 变化列表最多列出的条数（更早的记录仍在 <c>points-history.log</c> 里）。
+    /// 给个上限是为了不让「读文件 + 重绘」随历史无限增长。
+    /// </summary>
+    private const int MaxPointsListed = 60;
+
+    /// <summary>把账户行解析出的四个值填进「账户积分」卡（可跨线程调用）。</summary>
+    private void ApplyAccount(AccountSnapshot account)
+    {
+        void Apply()
+        {
+            if (IsDisposed || _valPoint is null) return;
+
+            _valPoint.Text = ShowOrDash(account.Point);
+            _valIncome.Text = ShowOrDash(account.Income);
+            _valLevel.Text = ShowOrDash(account.Level);
+            _valGrowth.Text = ShowOrDash(account.Growth);
+        }
+
+        if (IsHandleCreated && InvokeRequired)
+        {
+            try
+            {
+                BeginInvoke(Apply);
+            }
+            catch (InvalidOperationException)
+            {
+                // 窗口正在销毁
+            }
+            return;
+        }
+
+        Apply();
+    }
+
+    /// <summary>
+    /// 读积分变化历史并刷新「积分变化」列表。
+    ///
+    /// <para>
+    /// 每 2 秒被状态定时器叫一次，所以先比文件指纹：没动就一个字节都不读、一次重绘都不做 ——
+    /// 否则用户滚到列表中间，2 秒后会被弹回顶部。
+    /// </para>
+    /// </summary>
+    /// <param name="force">忽略指纹缓存强制读一次（启动时用）。</param>
+    private void RefreshPoints(bool force = false)
+    {
+        try
+        {
+            if (_pointsBox is null) return;
+
+            var store = _host.Points;
+            var stamp = store.Stamp();
+            if (!force && stamp == _pointsStamp) return;
+            _pointsStamp = stamp;
+
+            var records = store.Read(MaxPointsListed);
+
+            // 勾选「用历史里的最新值兜住账户卡」：重启后第一眼就该看到上次的积分，
+            // 而不是一排「—」等下次运行。只有这条确实带了数字才覆盖。
+            var latest = records.Count > 0 ? records[0] : null;
+            if (latest is not null && (latest.Point is not null || latest.Income is not null || latest.Growth is not null))
+            {
+                ApplyAccount(new AccountSnapshot
+                {
+                    Point = latest.Point?.ToString() ?? "-",
+                    Income = latest.Income?.ToString() ?? "-",
+                    Level = string.IsNullOrWhiteSpace(latest.Level) ? "-" : latest.Level,
+                    Growth = latest.Growth?.ToString() ?? "-",
+                    Origin = latest.Source,
+                });
+            }
+
+            RenderPoints(records);
+        }
+        catch
+        {
+            // 读历史失败不该影响别的任何功能
+        }
+    }
+
+    private void RenderPoints(List<PointsRecord> records)
+    {
+        if (IsDisposed) return;
+
+        var changed = records.Where(r => r.HasChange).ToList();
+
+        void Apply()
+        {
+            if (IsDisposed || _pointsBox is null) return;
+
+            _pointsBox.SuspendLayout();
+            try
+            {
+                _pointsBox.Clear();
+
+                if (changed.Count == 0)
+                {
+                    var tip = records.Count == 0
+                        ? "还没有积分记录 —— 跑一次签到、或等每天 00:01 的自动刷新后就有了"
+                        : $"最近 {records.Count} 次检查积分都没变（最近一次 {records[0].ShortTime}）";
+                    AppendPointsLine(tip, Theme.TextFaint);
+                    return;
+                }
+
+                foreach (var record in changed)
+                {
+                    AppendPointsLine(FormatPointsChange(record), DeltaColor(record));
+                }
+            }
+            finally
+            {
+                _pointsBox.ResumeLayout();
+            }
+        }
+
+        if (IsHandleCreated && InvokeRequired)
+        {
+            try
+            {
+                BeginInvoke(Apply);
+            }
+            catch (InvalidOperationException)
+            {
+                // 窗口正在销毁
+            }
+            return;
+        }
+
+        Apply();
+    }
+
+    private void AppendPointsLine(string text, Color color)
+    {
+        _pointsBox.SelectionStart = _pointsBox.TextLength;
+        _pointsBox.SelectionLength = 0;
+        _pointsBox.SelectionColor = color;
+        _pointsBox.AppendText(text + Environment.NewLine);
+        _pointsBox.SelectionColor = _pointsBox.ForeColor;
+    }
+
+    /// <summary>
+    /// 一条变化的单行摘要，例如
+    /// <c>10-13 09:06  +5 积分 → 123  +5 成长值 → 460  [manual]</c>。
+    ///
+    /// <para>
+    /// 增量写在最前面、当前值跟在箭头后面：光看增量看不出量级，只写当前值又看不出涨了多少。
+    /// </para>
+    ///
+    /// <para>
+    /// <b>同时变化时最多列两项</b>：「累计获得」与「积分余额」在签到场景下总是同增同减
+    /// （签到一次两边都 +5），三项全列出来只会把一行撑到折行 —— 而折行之后这个列表就没法扫读了。
+    /// 只在它俩都没变、独独累计变了时才把它顶上来。
+    /// </para>
+    /// </summary>
+    internal static string FormatPointsChange(PointsRecord record)
+    {
+        var parts = new List<string>();
+        Add("积分", record.DeltaPoint, record.Point);
+        Add("成长值", record.DeltaGrowth, record.Growth);
+        if (parts.Count == 0) Add("累计", record.DeltaIncome, record.Income);
+
+        return $"{record.ShortTime}  {string.Join("  ", parts)}  {TriggerLabel(record.Trigger)}";
+
+        void Add(string name, int? delta, int? current)
+        {
+            if (delta is not { } d || d == 0) return;
+            parts.Add($"{d:+#;-#;0} {name} → {current?.ToString() ?? "?"}");
+        }
+    }
+
+    /// <summary>
+    /// 触发方式 → 列表里那个两字标记。用中文而不是 <c>[manual]</c> 那样的原文：
+    /// 这行本来就贴着折行的边，四五个半角字符换掉就是 20~30 像素，足以决定折不折。
+    /// </summary>
+    private static string TriggerLabel(string trigger) => trigger switch
+    {
+        "manual" => "手动",
+        "cron" => "定时",
+        "status" => "刷新",
+        _ => trigger,
+    };
+
+    /// <summary>涨用绿、跌用红（这是积分不是股票，不套「A 股红涨绿跌」那套）。</summary>
+    private static Color DeltaColor(PointsRecord record)
+    {
+        var sum = (record.DeltaPoint ?? 0) + (record.DeltaIncome ?? 0) + (record.DeltaGrowth ?? 0);
+        return sum > 0 ? Theme.Success : sum < 0 ? Theme.Danger : Theme.TextBody;
+    }
+
+    /// <summary>接口没返回时显示「—」；那个占位符「-」看起来像「填了个横杠」而不是缺数据。</summary>
+    private static string ShowOrDash(string? value)
+        => string.IsNullOrWhiteSpace(value) || value == "-" ? "—" : value;
+
+    // ==================================================================
     //  自检（--selftest）
     // ==================================================================
 
@@ -831,6 +1055,7 @@ internal sealed partial class MainForm
             _chkOpenShareUrl, _chkOpenShareAlways,
             _chkAutoArticleId, _btnFetchArticle, _articlePreview,
             _btnImportHar, _harPreview,
+            _valPoint, _valIncome, _valLevel, _valGrowth, _pointsBox,
         ];
         var bound = inputs.Count(c => c is not null);
         lines.Add($"控件绑定: 配置控件 {bound}/{inputs.Length}, 托盘菜单 {_tray.ContextMenuStrip?.Items.Count ?? 0} 项");
@@ -942,11 +1167,29 @@ internal sealed partial class MainForm
         lines.AddRange(dueLines);
         ok &= dueOk;
 
+        // 4j) 「账户行」生成 ↔ 解析回归（离线）。「账户积分」卡就靠解析这行日志刷新，
+        //     而写它的是三个不同流程（签到前 / 签到后复核 / 每日刷新）——
+        //     只改其中一处就会让卡片在某些路径下停在旧值，且不报任何错。
+        var (accountOk, accountLines) = AccountLine.SelfCheck();
+        lines.AddRange(accountLines);
+        ok &= accountOk;
+
+        // 4k) 积分变化历史的比对回归（离线）。delta 算错不会抛异常，只会让「积分变化」
+        //     列表静默地少几条（把变化当成没变）或多几条（把「没拿到」当成「掉到 0」）——
+        //     而它正是用户判断「签到到底加没加分」的唯一依据，必须钉住。
+        //     往返测试同样用数据目录下的临时文件（理由见 4g）。
+        var (pointsOk, pointsLines) = PointsHistoryStore.SelfCheck(
+            Path.Combine(AppPaths.WorkDir, "_selftest_points"));
+        lines.AddRange(pointsLines);
+        ok &= pointsOk;
+
         var signCfg = _host.Config.Read();
         lines.Add($"签到通道: 端点={LynkConstants.EpSign}, "
             + $"原生通道 secret={(string.IsNullOrWhiteSpace(signCfg.CaNativeSecret) ? "未配置 (签到动作会被跳过, 其余功能正常)" : "已配置")}");
         lines.Add($"状态刷新: 每天 {SignScheduler.DailyRefreshTime:HH\\:mm} 自动拉一次最新签到状态 "
             + "(只读: 不签到 / 不推送), 命令行入口 --refresh-status");
+        lines.Add($"积分变化: 记录文件={_host.Points.FilePath} "
+            + $"(现有 {_host.Points.Read(0).Count} 条), 每次运行后自动与上一次比对并追加");
         lines.Add($"分享文章 ID: {ShareContentModes.Parse(signCfg.ShareContentMode).Describe()}, "
             + $"兜底={signCfg.ShareContentId}, 文章流端点={LynkConstants.EpExploreSquare}");
         lines.Add($"窗口尺寸: 默认={UiStateStore.DefaultWidth}x{UiStateStore.DefaultHeight} "

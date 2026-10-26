@@ -39,6 +39,7 @@ internal sealed class AppHost : IDisposable
         services.AddSingleton<TokenCache>();
         services.AddSingleton<JobState>();
         services.AddSingleton<RunLogStore>();
+        services.AddSingleton<PointsHistoryStore>();
 
         // 命名 HttpClient：与原项目一致（lynk 20s / push 10s）。
         // handler 走 HttpClientSetup 显式构造 —— 默认**不吃系统代理**：
@@ -63,6 +64,12 @@ internal sealed class AppHost : IDisposable
     public ConfigStore Config => _provider.GetRequiredService<ConfigStore>();
 
     public RunLogStore Logs => _provider.GetRequiredService<RunLogStore>();
+
+    /// <summary>
+    /// 积分变化历史（数据目录的 <c>points-history.log</c>）。
+    /// 写它的是签到流程与每日状态刷新；界面读它填「账户积分」与「积分变化」两块。
+    /// </summary>
+    public PointsHistoryStore Points => _provider.GetRequiredService<PointsHistoryStore>();
 
     public JobState State => _provider.GetRequiredService<JobState>();
 

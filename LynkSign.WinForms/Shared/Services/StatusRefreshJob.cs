@@ -34,12 +34,14 @@ public sealed class StatusRefreshJob
     private readonly LynkApiClient _api;
     private readonly TokenManager _tokens;
     private readonly ConfigStore _config;
+    private readonly PointsHistoryStore _points;
 
-    public StatusRefreshJob(LynkApiClient api, TokenManager tokens, ConfigStore config)
+    public StatusRefreshJob(LynkApiClient api, TokenManager tokens, ConfigStore config, PointsHistoryStore points)
     {
         _api = api;
         _tokens = tokens;
         _config = config;
+        _points = points;
     }
 
     public async Task<int> RunAsync(SignJobOptions options, IJobLogger log, CancellationToken ct = default)
@@ -83,7 +85,16 @@ public sealed class StatusRefreshJob
             log.Info($"  day/info data: {snapshot.DayInfoRaw}");
         }
 
-        log.Ok($"账户: {snapshot.AccountLine()}");
+        // 这行同时是界面「账户积分」卡的数据源（格式与正则统一在 AccountLine 里）。
+        // 顺带记一条积分变化：每天 00:01 这一次是「无人值守也照样留下积分轨迹」的唯一机会，
+        // 签到那天若是没跑成，至少还能从这条记录看出积分有没有动过。
+        var account = snapshot.ToAccount("状态刷新");
+        log.Ok(AccountLine.Build(account));
+
+        if (account.HasNumbers)
+        {
+            log.Ok(PointsHistoryStore.DescribeChange(_points.Observe(Trigger, account)));
+        }
 
         // 三个值缺一个就刷不了卡片（界面那条正则要求它们同行出现）。
         // 与其拿 0 去顶替「没拿到」，不如干脆不输出状态行 —— 卡片停在旧值，

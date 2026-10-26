@@ -41,11 +41,19 @@ public sealed class SignStatusSnapshot
     public string CardInfoCode { get; init; } = "-";
 
     /// <summary>
-    /// 账户信息的一行摘要。<b>用词与推送正文保持一致</b>（积分余额 / 累计获得 / 成长等级 / 成长值），
+    /// 转成账户快照（供 <see cref="AccountLine.Build"/> 打印、供积分变化历史比对）。
+    /// 用词与推送正文一致（积分余额 / 累计获得 / 成长等级 / 成长值），
     /// 避免日志里叫「Co积分」、推送里叫「积分余额」，对不上号。
     /// </summary>
-    public string AccountLine()
-        => $"积分余额={EnergyPoint}  累计获得={EnergyIncome}  成长等级={GrowthName}  成长值={GrowthValue}";
+    /// <param name="origin">这批数字的来源（写日志用），如 <c>状态刷新</c>。</param>
+    public AccountSnapshot ToAccount(string origin) => new()
+    {
+        Point = EnergyPoint,
+        Income = EnergyIncome,
+        Level = GrowthName,
+        Growth = GrowthValue,
+        Origin = origin,
+    };
 }
 
 /// <summary>
