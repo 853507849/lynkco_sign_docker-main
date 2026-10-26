@@ -9,7 +9,7 @@ internal enum ButtonKind
     /// <summary>次要操作：白底描边。</summary>
     Secondary,
 
-    /// <summary>弱操作：无边框，只有文字，鼠标移上去才浮出底色。</summary>
+    /// <summary>弱操作：浅灰填充的胶囊，没有描边。</summary>
     Ghost,
 }
 
@@ -20,11 +20,16 @@ internal enum ButtonKind
 /// 原生 <c>FlatStyle.System</c> 按钮在不同 Windows 版本上长得不一样，
 /// 而且没法做圆角与主题色，所以整只重画。
 /// </para>
+///
+/// <para>
+/// 层级只靠"实心 / 描边 / 纯文字"三档区分，不靠换色：一屏里同时出现三种彩色按钮，
+/// 就等于一个重点都没有。次级操作永远是白底 + 细边，弱操作连边都没有。
+/// </para>
 /// </summary>
 internal sealed class FlatButton : Button
 {
-    private const int PreferredHeight = 34;
-    private const int MinWidth = 76;
+    private const int PreferredHeight = 42;
+    private const int MinWidth = 96;
 
     private bool _hover;
     private bool _pressed;
@@ -62,8 +67,8 @@ internal sealed class FlatButton : Button
             new Size(int.MaxValue, int.MaxValue),
             TextFormatFlags.NoPadding);
 
-        var padding = Kind == ButtonKind.Ghost ? 22 : 34;
-        return new Size(Math.Max(text.Width + padding, MinWidth), PreferredHeight);
+        var padding = Kind == ButtonKind.Ghost ? 22 : 52;
+        return new Size(Math.Max(text.Width + padding, Kind == ButtonKind.Ghost ? 62 : MinWidth), PreferredHeight);
     }
 
     protected override void OnMouseEnter(EventArgs e)
@@ -109,15 +114,28 @@ internal sealed class FlatButton : Button
 
         // 幽灵按钮自己不画任何底色，不先整块刷底的话，双缓冲缓冲区里的残留像素
         // （别的控件留下的白框、上一帧画在旧位置上的文字）会原样露出来。
-        Theme.ClearBackdrop(g, this);
+        //
+        // 刷的是<b>父容器</b>的底色而不是自己的 BackColor：按钮既会出现在白色页脚上，
+        // 也会出现在白色卡片里，如果按固定色刷，幽灵按钮在页脚上就会显出一块
+        // 比周围暗一档的灰方块 —— 明明没有边框，却像是贴了张纸。
+        Theme.ClearBackdrop(g, this, Backdrop());
 
         var r = new RectangleF(0.5F, 0.5F, Width - 1F, Height - 1F);
 
-        var (fill, border, text) = ResolveColors();
+        var (fill, top, border, text) = ResolveColors();
 
         if (fill != Color.Transparent)
         {
-            Theme.FillRound(g, r, Theme.ButtonRadius, fill);
+            // 主按钮走同色系微渐变：上沿亮、下沿沉，看起来像一块有厚度的色块。
+            // 其余按钮是平的 —— 一屏里只允许一颗按钮有"体积"。
+            if (top is { } topColor)
+            {
+                Theme.FillRoundGradient(g, r, Theme.ButtonRadius, topColor, fill);
+            }
+            else
+            {
+                Theme.FillRound(g, r, Theme.ButtonRadius, fill);
+            }
         }
 
         if (border != Color.Transparent)
@@ -125,50 +143,58 @@ internal sealed class FlatButton : Button
             Theme.DrawRound(g, r, Theme.ButtonRadius, border);
         }
 
+        var font = Kind == ButtonKind.Primary ? Theme.BaseBold : Font;
+
         TextRenderer.DrawText(
             g,
             Text,
-            Font,
+            font,
             ClientRectangle,
             text,
             TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
     }
 
-    private (Color Fill, Color Border, Color Text) ResolveColors()
+    /// <summary>按钮所在容器的实际底色（透明时再往上一层找）。</summary>
+    private Color Backdrop()
+    {
+        var back = Parent?.BackColor ?? Theme.CardBg;
+        return back == Color.Transparent ? Theme.ChromeBg : back;
+    }
+
+    /// <summary>
+    /// 解析当前状态下的三层颜色。
+    /// <c>Top</c> 为 null 表示这块按钮是平的（只有填充色）；非 null 表示要画竖向渐变。
+    /// </summary>
+    private (Color Fill, Color? Top, Color Border, Color Text) ResolveColors()
     {
         if (!Enabled)
         {
             return Kind switch
             {
-                ButtonKind.Primary => (Color.FromArgb(0xC6, 0xD3, 0xEA), Color.Transparent, Color.FromArgb(0xF6, 0xF8, 0xFC)),
-                ButtonKind.Ghost => (Color.Transparent, Color.Transparent, Theme.TextFaint),
-                _ => (Color.FromArgb(0xF5, 0xF6, 0xF8), Theme.CardBorder, Theme.TextFaint),
+                ButtonKind.Primary => (Color.FromArgb(0xC9, 0xD7, 0xF5), null, Color.Transparent, Color.FromArgb(0xF7, 0xF9, 0xFD)),
+                ButtonKind.Ghost => (Color.Transparent, null, Color.Transparent, Theme.TextFaint),
+                _ => (Color.White, null, Theme.Divider, Theme.TextFaint),
             };
         }
 
         return Kind switch
         {
-            ButtonKind.Primary => (
-                _pressed ? Theme.AccentDown : _hover ? Theme.AccentHover : Theme.Accent,
-                Color.Transparent,
-                Color.White),
+            ButtonKind.Primary => _pressed
+                ? (Theme.AccentDown, Theme.AccentHover, Color.Transparent, Color.White)
+                : _hover
+                    ? (Theme.AccentHover, Theme.AccentHoverLight, Color.Transparent, Color.White)
+                    : (Theme.Accent, Theme.AccentLight, Color.Transparent, Color.White),
 
             ButtonKind.Ghost => (
-                _pressed
-                    ? Color.FromArgb(0xE6, 0xEA, 0xF1)
-                    : _hover
-                        ? Color.FromArgb(0xEE, 0xF1, 0xF6)
-                        : Color.Transparent,
-                Color.Transparent,
-                _hover || _pressed ? Theme.TextBody : Theme.TextMuted),
+                _pressed ? Theme.PressBg : _hover ? Theme.ChipHover : Theme.ChipBg,
+                null,
+                _hover || _pressed ? Theme.ChipBorderHover : Theme.ChipBorder,
+                _hover || _pressed ? Theme.TextStrong : Theme.TextBody),
 
             _ => (
-                _pressed
-                    ? Color.FromArgb(0xEC, 0xF0, 0xF6)
-                    : _hover
-                        ? Color.FromArgb(0xF8, 0xFA, 0xFD)
-                        : Color.White,
-                _hover || _pressed ? Color.FromArgb(0xCF, 0xD8, 0xE6) : Theme.CardBorder,
+                _pressed ? Theme.PressBg : _hover ? Color.FromArgb(0xFA, 0xFB, 0xFE) : Theme.CardBg,
+                null,
+                _hover || _pressed ? Color.FromArgb(0xC9, 0xD5, 0xEC) : Theme.CardBorder,
                 _pressed ? Theme.TextStrong : Theme.TextBody),
         };
     }

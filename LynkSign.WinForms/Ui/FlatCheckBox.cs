@@ -67,7 +67,7 @@ internal sealed class FlatCheckBox : CheckBox
 
         if (Checked)
         {
-            Theme.FillRound(g, box, 4.5F, Enabled ? Theme.Accent : Color.FromArgb(0xC6, 0xD3, 0xEA));
+            Theme.FillRound(g, box, 5F, Enabled ? Theme.Accent : Color.FromArgb(0xC9, 0xD5, 0xEE));
 
             using var pen = new Pen(Color.White, 2F)
             {
@@ -85,8 +85,8 @@ internal sealed class FlatCheckBox : CheckBox
         }
         else
         {
-            Theme.FillRound(g, box, 4.5F, Color.White);
-            Theme.DrawRound(g, box, 4.5F, Color.FromArgb(0xC7, 0xCF, 0xDB));
+            Theme.FillRound(g, box, 5F, Color.White);
+            Theme.DrawRound(g, box, 5F, Color.FromArgb(0xCF, 0xD5, 0xDF));
         }
 
         TextRenderer.DrawText(

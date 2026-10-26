@@ -4,14 +4,14 @@ using System.Drawing.Drawing2D;
 namespace LynkSign.WinForms.Ui;
 
 /// <summary>
-/// 状态胶囊：一个圆点 + 一行小字，底色是主题色的淡色版。
+/// 状态胶囊：一个圆点 + 一行小字，底色是语气色的淡色版。
 /// 放在标题栏右侧，一眼看出「空闲 / 运行中」。
 /// </summary>
 internal sealed class StatusPill : Control
 {
-    private const int PadX = 12;
+    private const int PadX = 13;
     private const int Gap = 7;
-    private const int DotSize = 7;
+    private const int DotSize = 6;
 
     private string _text = "";
     private Color _tone = Theme.TextMuted;
@@ -26,9 +26,9 @@ internal sealed class StatusPill : Control
             | ControlStyles.ResizeRedraw,
             true);
 
-        BackColor = Theme.CardBg;
-        Font = Theme.Small;
-        Height = 26;
+        BackColor = Theme.ChromeBg;
+        Font = Theme.SmallBold;
+        Height = 28;
     }
 
     [AllowNull]

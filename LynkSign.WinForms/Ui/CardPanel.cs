@@ -1,7 +1,7 @@
 namespace LynkSign.WinForms.Ui;
 
 /// <summary>
-/// 圆角卡片容器：白底、淡边框，可选标题（左侧带主题色小竖条）。
+/// 圆角卡片容器：一块平面 + 0.5px 冷灰细边，可选标题。
 ///
 /// <para>
 /// <b>关键点</b>：<see cref="DisplayRectangle"/> 被改写，把标题占用的那一条从可布局区域里挖掉。
@@ -12,14 +12,16 @@ namespace LynkSign.WinForms.Ui;
 /// <para>
 /// 卡片圆角外的像素填成页面底色，于是圆角自然"融"进页面背景，不会有白角。
 /// </para>
+///
+/// <para>
+/// <see cref="Fill"/> 允许换底色（日志卡整套是深色的）。标题/备注的文字颜色会按底色
+/// 自动切到深字或浅字，调用方不用两处都记着改。
+/// </para>
 /// </summary>
 internal class CardPanel : Panel
 {
     /// <summary>标题带的净高度（含标题文字与它下面留给内容的一点空隙）。</summary>
-    private const int TitleBand = 32;
-
-    private const float BarWidth = 3F;
-    private const float BarHeight = 15F;
+    public const int TitleHeight = 34;
 
     private string? _title;
     private string? _note;
@@ -61,14 +63,24 @@ internal class CardPanel : Panel
         }
     }
 
-    /// <summary>卡片边框色，可按状态换色（如运行中描成主题色）。</summary>
+    private Color _fill = Theme.CardBg;
+
+    /// <summary>卡片填充色。深色卡片（日志）由调用方指定。</summary>
+    public Color Fill
+    {
+        get => _fill;
+        set
+        {
+            _fill = value;
+            Invalidate();
+        }
+    }
+
+    /// <summary>卡片边框色，可按状态换色。</summary>
     public Color BorderColor { get; set; } = Theme.CardBorder;
 
-    /// <summary>左侧竖条的颜色。<c>null</c> 表示不画竖条。</summary>
-    public Color? AccentColor { get; set; } = Theme.Accent;
-
     /// <summary>标题带是否占用布局空间。</summary>
-    private int TitleOffset => string.IsNullOrEmpty(_title) ? 0 : TitleBand;
+    private int TitleOffset => string.IsNullOrEmpty(_title) ? 0 : TitleHeight;
 
     public override Rectangle DisplayRectangle
     {
@@ -88,7 +100,7 @@ internal class CardPanel : Panel
     /// <para>
     /// 基类算期望高度时只按子控件的尺寸 + Padding，<b>不会</b>把
     /// <see cref="DisplayRectangle"/> 里挖掉的标题带算进去；
-    /// 而卡片又是靠 <c>AutoSize</c> 撑高的，不补这 32px 卡片就会矮一条，
+    /// 而卡片又是靠 <c>AutoSize</c> 撑高的，不补这 34px 卡片就会矮一条，
     /// 表现为最下面一行内容被卡片下边缘裁掉。
     /// </para>
     /// </summary>
@@ -107,26 +119,24 @@ internal class CardPanel : Panel
 
         var full = new RectangleF(0.5F, 0.5F, Width - 1F, Height - 1F);
 
-        Theme.DrawCard(g, full, BorderColor);
+        Theme.DrawCardFilled(g, full, Theme.CardRadius, Fill, BorderColor);
 
         if (!string.IsNullOrEmpty(_title))
         {
+            // 深色卡片上标题要反过来：底色一深，深字就整块糊掉了
+            var dark = Theme.IsDark(Fill);
+            var titleColor = dark ? Color.FromArgb(0xEE, 0xF1, 0xF6) : Theme.TextStrong;
+            var noteColor = dark ? Color.FromArgb(0x7C, 0x86, 0x94) : Theme.TextFaint;
+
             var y = Padding.Top;
-
-            if (AccentColor is { } accent)
-            {
-                Theme.DrawAccentBar(g, Padding.Left, y + 1F, BarHeight, accent, BarWidth);
-            }
-
-            var textX = Padding.Left + (AccentColor is null ? 0F : BarWidth + 8F);
-            var textRect = new RectangleF(textX, y - 2F, Width - textX - Padding.Right, BarHeight + 6F);
+            var textRect = new RectangleF(Padding.Left, y - 2F, Width - Padding.Left - Padding.Right, 20F);
 
             TextRenderer.DrawText(
                 g,
                 _title,
                 Theme.Section,
                 Rectangle.Round(textRect),
-                Theme.TextStrong,
+                titleColor,
                 TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
 
             if (!string.IsNullOrEmpty(_note))
@@ -136,7 +146,7 @@ internal class CardPanel : Panel
                     _note,
                     Theme.Small,
                     Rectangle.Round(textRect),
-                    Theme.TextFaint,
+                    noteColor,
                     TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
             }
         }

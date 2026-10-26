@@ -14,9 +14,14 @@ namespace LynkSign.WinForms.Ui;
 /// <para>
 /// <b>排版上的一个坑</b>：大字号文字必须用「按点绘制」的重载
 /// （<c>DrawText(g, text, font, Point, …)</c>），不能用「按矩形绘制」的重载。
-/// 矩形版会把文字硬塞进给定高度里，19pt 的字塞进 30px 的框会把字形底部裁掉 ——
+/// 矩形版会把文字硬塞进给定高度里，20pt 的字塞进 30px 的框会把字形底部裁掉 ——
 /// 「已」看起来会变成「コ」。按点绘制则始终按字体自身的行高排版，不会裁剪。
 /// 整个内容块再按实际行高算出总高、在卡片内垂直居中，这样改字号也不会画崩。
+/// </para>
+///
+/// <para>
+/// 高度不写死：<see cref="Height1Line"/> 由字体行高 + 内边距现算。
+/// 字号一改、DPI 一换，卡片自己跟着长，不用回来重新量一个魔法数字。
 /// </para>
 ///
 /// <para>
@@ -26,11 +31,10 @@ namespace LynkSign.WinForms.Ui;
 /// </summary>
 internal sealed class MetricCard : Control
 {
-    private const int PadX = 15;
-    private const int PadY = 12;
-    private const int CaptionToValue = 4;
-    private const int ValueToHint = 1;
-    private const float DotSize = 7F;
+    private const int PadX = 18;
+    private const int PadY = 16;
+    private const int CaptionToValue = 8;
+    private const int ValueToHint = 5;
 
     private string _value = "—";
     private string _caption = "";
@@ -52,11 +56,13 @@ internal sealed class MetricCard : Control
         Height = Height1Line;
     }
 
-    /// <summary>带底部说明文字时的卡片建议高度（够放 19pt 大字 + 两行小字）。</summary>
-    public const int Height1Line = 100;
+    /// <summary>带底部说明文字时的卡片高度（够放 20pt 大字 + 两行小字）。</summary>
+    public static int Height1Line =>
+        PadY * 2 + Theme.Small.Height + CaptionToValue + Theme.Metric.Height + ValueToHint + Theme.Small.Height;
 
-    /// <summary>没有底部说明文字时的卡片建议高度。</summary>
-    public const int Height2Line = 80;
+    /// <summary>没有底部说明文字时的卡片高度。</summary>
+    public static int Height2Line =>
+        PadY * 2 + Theme.Small.Height + CaptionToValue + Theme.Metric.Height;
 
     /// <summary>小标题（卡片上方那行灰字）。</summary>
     public string Caption
@@ -104,8 +110,24 @@ internal sealed class MetricCard : Control
         }
     }
 
-    /// <summary>左上角小圆点的颜色；会跟 <see cref="Control.ForeColor"/> 联动。</summary>
-    public Color DotColor { get; set; } = Theme.TextFaint;
+    private Color? _tint;
+
+    /// <summary>
+    /// 卡片底色。<c>null</c> = 白卡；指定颜色则整块染成该色（如"今天已签到"用淡绿），
+    /// 让一张卡在四张里自己站出来，而不用靠加粗边框或图标去抢。
+    /// </summary>
+    public Color? Tint
+    {
+        get => _tint;
+        set
+        {
+            _tint = value;
+            Invalidate();
+        }
+    }
+
+    /// <summary>染色卡片的描边色；不指定则用默认淡灰。</summary>
+    public Color? TintBorder { get; set; }
 
     /// <summary>与 <see cref="Value"/> 同义，方便沿用原来的 Label 写法。</summary>
     [AllowNull]
@@ -115,20 +137,22 @@ internal sealed class MetricCard : Control
         set => Value = value ?? string.Empty;
     }
 
-    protected override void OnForeColorChanged(EventArgs e)
-    {
-        base.OnForeColorChanged(e);
-        DotColor = ForeColor;
-        Invalidate();
-    }
-
     protected override void OnPaint(PaintEventArgs e)
     {
         var g = e.Graphics;
 
         Theme.ClearBackdrop(g, this);
 
-        Theme.DrawCard(g, new RectangleF(0.5F, 0.5F, Width - 1F, Height - 1F));
+        var r = new RectangleF(0.5F, 0.5F, Width - 1F, Height - 1F);
+
+        if (Tint is { } tint)
+        {
+            Theme.DrawCardFilled(g, r, Theme.CardRadius, tint, TintBorder ?? Theme.CardBorder);
+        }
+        else
+        {
+            Theme.DrawCard(g, r);
+        }
 
         var captionH = Theme.Small.Height;
         var valueH = Theme.Metric.Height;
@@ -142,23 +166,14 @@ internal sealed class MetricCard : Control
         var captionY = top;
         var valueY = captionY + captionH + CaptionToValue;
 
-        // ---- 小圆点 + 小标题 ----
+        // ---- 小标题 ----
         if (!string.IsNullOrEmpty(_caption))
         {
-            var dotCx = PadX + DotSize / 2F;
-            var dotCy = captionY + captionH / 2F;
-
-            g.SmoothingMode = SmoothingMode.AntiAlias;
-            using (var dot = new SolidBrush(DotColor))
-            {
-                g.FillEllipse(dot, dotCx - DotSize / 2F, dotCy - DotSize / 2F, DotSize, DotSize);
-            }
-
             TextRenderer.DrawText(
                 g,
                 _caption,
                 Theme.Small,
-                new Point(PadX + (int)DotSize + 6, captionY),
+                new Point(PadX, captionY),
                 Theme.TextMuted,
                 TextFormatFlags.NoPadding);
         }

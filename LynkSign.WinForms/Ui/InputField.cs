@@ -3,13 +3,17 @@ using System.Diagnostics.CodeAnalysis;
 namespace LynkSign.WinForms.Ui;
 
 /// <summary>
-/// 圆角输入框：外圈自己画（未聚焦淡灰、聚焦主题色 + 淡光晕），里面塞一只无边框的
-/// <see cref="TextBox"/>。
+/// 圆角输入框：平时是一块浅灰的"填充块"，聚焦时才变成白底 + 主题色描边。
 ///
 /// <para>
 /// 之所以包一层而不是去继承 TextBox 硬改 <c>WM_PAINT</c>：
 /// TextBox 的原生边框与内边距（EM_SETMARGINS）在不同 Windows 主题下表现不一致，
 /// 包一层之后所有外观都由自己掌控，行为则完全透传给内部 TextBox。
+/// </para>
+///
+/// <para>
+/// 表单里一屏能有十几个输入框。每个都描一圈灰边的话，整张卡片会被网格线切碎；
+/// 换成"底色区分 + 只有聚焦的那个才描边"，视线自然落在正在填的那一格上。
 /// </para>
 ///
 /// <para>
@@ -19,12 +23,13 @@ namespace LynkSign.WinForms.Ui;
 /// </summary>
 internal sealed class InputField : Panel
 {
-    private const int PadX = 11;
-    private const int PadY = 7;
-    private const int SingleLineHeight = 34;
+    private const int PadX = 14;
+    private const int PadY = 10;
     private const int LineHeight = 19;
 
     private readonly TextBox _box;
+    private readonly int _preferredHeight;
+    private readonly IDisposable? _suppress;
     private bool _focused;
 
     public InputField(int lines = 1, bool password = false)
@@ -46,7 +51,7 @@ internal sealed class InputField : Panel
             BorderStyle = BorderStyle.None,
             Font = Theme.Base,
             ForeColor = Theme.TextBody,
-            BackColor = Theme.CardBg,
+            BackColor = Theme.FieldBg,
             Multiline = multiline,
             WordWrap = multiline,
             AcceptsReturn = multiline,
@@ -57,18 +62,34 @@ internal sealed class InputField : Panel
         _box.GotFocus += (_, _) =>
         {
             _focused = true;
+            _box.BackColor = Theme.CardBg;
             Invalidate();
         };
 
         _box.LostFocus += (_, _) =>
         {
             _focused = false;
+            _box.BackColor = Theme.FieldBg;
             Invalidate();
         };
 
+        if (multiline)
+        {
+            // 多行 TextBox 会自己画一根滚动条（白底 + 上下箭头），压在浅灰的填充块里
+            // 比输入框本身还显眼。这里只把它藏起来 —— 滚动范围与滚轮响应都还在，
+            // 交互一点没变，只是不再有那根白条。
+            // 必须用 Suppress 而不是只藏一次：Edit 控件在滚轮/按键/改尺寸后会把
+            // WS_VSCROLL 装回去，藏一次的话滚两下白条就又回来了。
+            _suppress = NativeScroll.Suppress(_box);
+        }
+
         Controls.Add(_box);
 
-        Height = multiline ? lines * LineHeight + PadY * 2 + 4 : SingleLineHeight;
+        // 单行高度按内部 TextBox 的真实高度算，不能写死一个 36：
+        // 150% 缩放下 9pt 的一行要 23px，留给它的空间少 1px 都会被裁掉半行字
+        // （实测写字位是 20px 时占位提示直接一个字都看不见，只剩一个空灰条）。
+        Height = multiline ? lines * LineHeight + PadY * 2 + 6 : PadY * 2 + _box.PreferredHeight;
+        _preferredHeight = Height;
         Margin = new Padding(0, 3, 0, 3);
     }
 
@@ -108,6 +129,29 @@ internal sealed class InputField : Panel
 
     public bool Multiline => _box.Multiline;
 
+    /// <summary>
+    /// 高度就是构造时定的那个值，不再让基类按"内部 TextBox 的期望尺寸"另算一个。
+    ///
+    /// <para>
+    /// 不覆写的话，Panel 的默认实现会报出一个比实际更高的首选高度（实测 61 vs 36），
+    /// 而表单行是按子控件的首选高度自适应（AutoSize 行）——于是同一张卡里
+    /// "带说明文字的那一行"的输入框会比别的行高出一截，视觉上像两种控件。
+    /// </para>
+    ///
+    /// <para>
+    /// 必须用构造时的值，不能用当前的 <see cref="Control.Height"/>：控件被 Dock=Fill
+    /// 拉高之后，再按 Height 报首选高度就成了正反馈 —— 每排一次版就再高一圈。
+    /// </para>
+    /// </summary>
+    public override Size GetPreferredSize(Size proposedSize) => new(0, _preferredHeight);
+
+    protected override void Dispose(bool disposing)
+    {
+        // 钩子会订阅内部 TextBox 的句柄事件，控件销毁时一并松手
+        if (disposing) _suppress?.Dispose();
+        base.Dispose(disposing);
+    }
+
     protected override void OnLayout(LayoutEventArgs levent)
     {
         base.OnLayout(levent);
@@ -139,17 +183,17 @@ internal sealed class InputField : Panel
 
         var r = new RectangleF(0.5F, 0.5F, Width - 1F, Height - 1F);
 
-        Theme.FillRound(g, r, Theme.FieldRadius, Theme.CardBg);
-
         if (_focused)
         {
-            // 聚焦：先用淡色描一圈稍粗的"光晕"，再压一条实色边，看起来更柔和
+            Theme.FillRound(g, r, Theme.FieldRadius, Theme.CardBg);
+
+            // 聚焦：先用一圈极淡的外扩做光晕，再压一条实色边，看起来更柔和
             Theme.DrawRound(g, RectangleF.Inflate(r, 1.5F, 1.5F), Theme.FieldRadius + 1.5F, Theme.AccentSoft, 2F);
-            Theme.DrawRound(g, r, Theme.FieldRadius, Theme.Accent);
+            Theme.DrawRound(g, r, Theme.FieldRadius, Theme.Accent, 1.4F);
         }
         else
         {
-            Theme.DrawRound(g, r, Theme.FieldRadius, Color.FromArgb(0xD8, 0xDD, 0xE6));
+            Theme.FillRound(g, r, Theme.FieldRadius, Theme.FieldBg);
         }
     }
 }

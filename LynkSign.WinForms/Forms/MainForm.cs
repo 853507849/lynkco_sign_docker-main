@@ -33,9 +33,9 @@ internal sealed partial class MainForm : Form
     private const int MaxLogLines = 3000;
     private const int LogTrimStep = 800;
 
-    private const int HeaderHeight = 62;
-    private const int PagePadding = 20;
-    private const int CardGap = 12;
+    private const int HeaderHeight = 60;
+    private const int PagePadding = 22;
+    private const int CardGap = 14;
 
     private readonly AppHost _host;
     private readonly bool _startMinimized;
@@ -162,8 +162,8 @@ internal sealed partial class MainForm : Form
     private FlatButton _btnRunNow = null!;
     private FlatButton _btnSave = null!;
     private FlatCheckBox _chkAutostart = null!;
-    private ToolStripStatusLabel _sbDataDir = null!;
-    private ToolStripStatusLabel _sbState = null!;
+    private Label _sbDataDir = null!;
+    private Label _sbState = null!;
 
     private NotifyIcon _tray = null!;
     private ToolStripMenuItem _trayAutostart = null!;
@@ -231,8 +231,7 @@ internal sealed partial class MainForm : Form
         BackColor = Theme.PageBg;
 
         var header = BuildHeader();
-        var buttons = BuildButtonBar();
-        var status = BuildStatusBar();
+        var footer = BuildFooter();
 
         _tabs = new TabStrip { Dock = DockStyle.Top };
         _tabs.AddItem("运行状态");
@@ -250,8 +249,7 @@ internal sealed partial class MainForm : Form
         Controls.Add(_pageHost);
         Controls.Add(_tabs);
         Controls.Add(header);
-        Controls.Add(buttons);
-        Controls.Add(status);
+        Controls.Add(footer);
 
         ResumeLayout(performLayout: true);
     }
@@ -282,20 +280,19 @@ internal sealed partial class MainForm : Form
         {
             Dock = DockStyle.Top,
             Height = HeaderHeight,
-            BackColor = Theme.CardBg,
+            BackColor = Theme.ChromeBg,
         };
 
-        header.Paint += (_, e) =>
-        {
-            using var pen = new Pen(Theme.Divider, 1F);
-            e.Graphics.DrawLine(pen, 0, header.Height - 1, header.Width, header.Height - 1);
-        };
+        // 顶栏、页签、页脚共用同一块白，中间不再各画一条分隔线 ——
+        // 三条横杠叠在一起会把窗口切成好几段，只有页签底下那一条是必要的。
 
-        var textLeft = 22;
+        const int left = 22;
 
-        // 图标尺寸跟着字体走，不写死：150% DPI 下 11pt 标题本身就有 22px 高，
+        // 图标尺寸跟着字体走，不写死：150% DPI 下 12pt 标题本身就有 26px 高，
         // 再塞一个 22px 的图标会显得比字还小。
-        var iconSize = Math.Clamp(Theme.Title.Height + 6, 22, HeaderHeight - 20);
+        var iconSize = Math.Clamp(Theme.Title.Height + 2, 24, HeaderHeight - 22);
+        var textLeft = left;
+
         var iconBitmap = LoadAppIconBitmap(iconSize);
         if (iconBitmap is not null)
         {
@@ -306,12 +303,14 @@ internal sealed partial class MainForm : Form
                 // AutoSize 会把控件撑成位图的真实尺寸，而位图尺寸在不同 DPI 下不一定等于 iconSize。
                 Size = new Size(iconSize, iconSize),
                 SizeMode = PictureBoxSizeMode.StretchImage,
-                BackColor = Theme.CardBg,
-                Location = new Point(22, (HeaderHeight - iconSize) / 2),
+                BackColor = Theme.ChromeBg,
+                Location = new Point(left, (HeaderHeight - iconSize) / 2),
             };
             header.Controls.Add(picture);
-            textLeft = 22 + iconSize + 12;
+            textLeft = left + iconSize + 12;
         }
+
+        var titleTop = Math.Max(4, (HeaderHeight - Theme.Title.Height - Theme.Small.Height - 2) / 2);
 
         header.Controls.Add(new Label
         {
@@ -320,7 +319,7 @@ internal sealed partial class MainForm : Form
             ForeColor = Theme.TextStrong,
             AutoSize = true,
             BackColor = Color.Transparent,
-            Location = new Point(textLeft, 13),
+            Location = new Point(textLeft, titleTop),
         });
 
         header.Controls.Add(new Label
@@ -330,7 +329,7 @@ internal sealed partial class MainForm : Form
             ForeColor = Theme.TextFaint,
             AutoSize = true,
             BackColor = Color.Transparent,
-            Location = new Point(textLeft + 1, 36),
+            Location = new Point(textLeft + 1, titleTop + Theme.Title.Height + 1),
         });
 
         _pillState = new StatusPill { Text = "就绪" };
@@ -358,7 +357,7 @@ internal sealed partial class MainForm : Form
         {
             Dock = DockStyle.Fill,
             BackColor = Theme.PageBg,
-            Padding = new Padding(PagePadding, PagePadding - 4, PagePadding, PagePadding),
+            Padding = new Padding(PagePadding, 16, PagePadding, PagePadding),
         };
 
         var stack = new TableLayoutPanel
@@ -382,15 +381,18 @@ internal sealed partial class MainForm : Form
     }
 
     /// <summary>
-    /// 「运行计划 / 账户积分」这一行的高度。
+    /// 「运行计划 / 账户积分」这一行的高度，按字体行高现算，不写死。
     ///
     /// <para>
-    /// 不能拍脑袋给 —— 卡里是 <b>4 行 9pt 中文</b>（账户积分那侧），每行实测要 24 设备像素，
-    /// 再加上卡片的标题带（32）与上下留白（16×2），164 是这个组合的下限。
-    /// 给少了不会报错，只表现为几行文字互相压在一起（自绘布局的典型静默故障）。
+    /// 计划卡是 3 行"标题 + 值"，账户卡是 2×2"小标题 + 数字"；取两者较高的那个，
+    /// 再加上卡片标题带与上下内边距。以前这里是量出来的 164 —— 那种数字只在
+    /// 编写它的那台机器、那个缩放下成立，字号一调就会表现为几行文字悄悄压在一起
+    /// （自绘布局的典型静默故障，不会报任何错）。
     /// </para>
     /// </summary>
-    private const int PlanRowHeight = 164;
+    private static readonly int PlanRowHeight = Math.Max(
+        CardPanel.TitleHeight + Theme.CardPadding * 2 + (Theme.Base.Height + 12) * 3 + 4,
+        CardPanel.TitleHeight + Theme.CardPadding * 2 + (Theme.Small.Height + 2 + Theme.Meter.Height + 8) * 2);
 
     /// <summary>
     /// 「运行计划」与「账户积分」并排一行。
@@ -432,10 +434,11 @@ internal sealed partial class MainForm : Form
             BackColor = Theme.PageBg,
             Margin = Padding.Empty,
         };
-        // 40 : 60 是量出来的：左边要装下「10-13 09:06  +5 积分 → 123  +5 成长值 → 460  手动」
-        // 一行不折（一行折了，这个列表就没法扫读了），右边的日志区又尽量别太窄。
-        row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 40F));
-        row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 60F));
+        // 44 : 56：左边要装下「10-13 09:06  +5 积分 → 123  +2 成长值 → 460  手动」一整行。
+        // 一行折了这个列表就没法扫读了（实测 40% 时最后那个「定时/刷新」会被挤到下一行），
+        // 右边的日志区仍然比它宽，主次没变。
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 44F));
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 56F));
 
         var points = BuildPointsHistoryCard();
         points.Margin = new Padding(0, 0, CardGap / 2, 0);
@@ -512,7 +515,6 @@ internal sealed partial class MainForm : Form
         {
             Dock = DockStyle.Fill,
             Title = "运行计划",
-            AccentColor = Theme.Accent,
             // 纵向间距由外层那一行负责（卡片自己再留就成了双份）
             Margin = Padding.Empty,
         };
@@ -521,19 +523,22 @@ internal sealed partial class MainForm : Form
         {
             Dock = DockStyle.Fill,
             ColumnCount = 2,
-            RowCount = 3,
+            RowCount = 4,
             BackColor = Theme.CardBg,
         };
-        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 88F));
+        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 84F));
         grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
         for (var i = 0; i < 3; i++)
         {
-            grid.RowStyles.Add(new RowStyle(SizeType.Percent, 33.33F));
+            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, Theme.Base.Height + 12));
         }
 
-        _valNext = NewValueLabel(Theme.TextBody);
-        _valRefresh = NewValueLabel(Theme.TextBody);
-        _valLast = NewValueLabel(Theme.TextFaint);
+        // 最后一行吃掉剩余高度：卡片比内容高时，多出来的空白留在底部而不是把三行拉开
+        grid.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+
+        _valNext = NewValueLabel(Theme.TextStrong, Theme.BaseBold);
+        _valRefresh = NewValueLabel(Theme.TextMuted, Theme.Base);
+        _valLast = NewValueLabel(Theme.TextFaint, Theme.Base);
 
         grid.Controls.Add(NewCaptionLabel("下次运行"), 0, 0);
         grid.Controls.Add(_valNext, 1, 0);
@@ -563,7 +568,6 @@ internal sealed partial class MainForm : Form
             Dock = DockStyle.Fill,
             Title = "账户积分",
             Note = "积分 / 成长，每次运行后刷新",
-            AccentColor = Theme.Accent,
             Margin = Padding.Empty,
         };
 
@@ -571,26 +575,33 @@ internal sealed partial class MainForm : Form
         {
             Dock = DockStyle.Fill,
             ColumnCount = 2,
-            RowCount = 4,
+            RowCount = 5,
             BackColor = Theme.CardBg,
         };
-        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 88F));
-        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-        for (var i = 0; i < 4; i++) grid.RowStyles.Add(new RowStyle(SizeType.Percent, 25F));
+        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
+        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
 
-        // 首行用强调色：一眼看到的是「我有多少积分」，其余三项是它的注解
-        _valPoint = NewValueLabel(Theme.TextStrong);
-        _valIncome = NewValueLabel(Theme.TextBody);
-        _valLevel = NewValueLabel(Theme.TextBody);
-        _valGrowth = NewValueLabel(Theme.TextBody);
+        // 2×2 而不是四行"标签 | 值"：四个数字排在两列里，横竖都对齐，
+        // 一眼就能比出"余额 / 累计 / 等级 / 成长值"之间的关系。
+        grid.RowStyles.Add(new RowStyle(SizeType.Absolute, Theme.Small.Height + 2));
+        grid.RowStyles.Add(new RowStyle(SizeType.Absolute, Theme.Meter.Height + 8));
+        grid.RowStyles.Add(new RowStyle(SizeType.Absolute, Theme.Small.Height + 2));
+        grid.RowStyles.Add(new RowStyle(SizeType.Absolute, Theme.Meter.Height + 8));
+        grid.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
 
-        grid.Controls.Add(NewCaptionLabel("积分余额"), 0, 0);
-        grid.Controls.Add(_valPoint, 1, 0);
-        grid.Controls.Add(NewCaptionLabel("累计获得"), 0, 1);
+        // 首格用重色：一眼看到的是「我有多少积分」，其余三项是它的注解
+        _valPoint = NewValueLabel(Theme.TextStrong, Theme.Meter, bottom: 8);
+        _valIncome = NewValueLabel(Theme.TextBody, Theme.Meter, bottom: 8);
+        _valLevel = NewValueLabel(Theme.TextBody, Theme.Meter, bottom: 8);
+        _valGrowth = NewValueLabel(Theme.TextBody, Theme.Meter, bottom: 8);
+
+        grid.Controls.Add(NewCaptionLabel("积分余额", bottom: 2), 0, 0);
+        grid.Controls.Add(NewCaptionLabel("累计获得", bottom: 2), 1, 0);
+        grid.Controls.Add(_valPoint, 0, 1);
         grid.Controls.Add(_valIncome, 1, 1);
-        grid.Controls.Add(NewCaptionLabel("成长等级"), 0, 2);
-        grid.Controls.Add(_valLevel, 1, 2);
-        grid.Controls.Add(NewCaptionLabel("成长值"), 0, 3);
+        grid.Controls.Add(NewCaptionLabel("成长等级", bottom: 2), 0, 2);
+        grid.Controls.Add(NewCaptionLabel("成长值", bottom: 2), 1, 2);
+        grid.Controls.Add(_valLevel, 0, 3);
         grid.Controls.Add(_valGrowth, 1, 3);
 
         card.Controls.Add(grid);
@@ -613,7 +624,6 @@ internal sealed partial class MainForm : Form
             Dock = DockStyle.Fill,
             Title = "积分变化",
             Note = "只列有增减的记录",
-            AccentColor = Theme.Accent,
             Margin = Padding.Empty,
         };
 
@@ -627,23 +637,35 @@ internal sealed partial class MainForm : Form
             Font = Theme.Small,
             DetectUrls = false,
             WordWrap = true,
-            ScrollBars = RichTextBoxScrollBars.Vertical,
+            // ForcedVertical 而不是 None：滚动能力要留着（滚轮、光标跟随、ScrollToCaret
+            // 都依赖它），只是把 RichEdit 自己画的那根滚动条藏起来，换成右边的自绘条。
+            ScrollBars = RichTextBoxScrollBars.ForcedVertical,
             HideSelection = false,
             TabStop = false,
         };
 
-        card.Controls.Add(_pointsBox);
+        var bar = new SlimScrollBar(Theme.ScrollThumb, Theme.ScrollThumbHover)
+        {
+            BackColor = Theme.CardBg,
+        };
+
+        card.Controls.Add(new ScrollHost(_pointsBox, bar));
+        bar.Attach(_pointsBox);
         return card;
     }
 
     private Control BuildLogCard()
     {
+        // 日志卡整块就是深色的：深色控制台嵌在白卡里，四角会露出直角，
+        // 白底上的深色方块怎么补都补不圆。整卡深色之后圆角、内边距、标题都自洽。
         var card = new CardPanel
         {
             Dock = DockStyle.Fill,
             Title = "运行日志",
             Note = "完整日志见 logs 目录",
-            AccentColor = Theme.Accent,
+            Fill = Theme.LogBg,
+            BorderColor = Theme.LogBorder,
+            Padding = new Padding(16, 14, 8, 10),
             // 必须显式清零：不写的话会套用 WinForms 默认的 3px 外边距，
             // 日志卡就会比上面那张「运行计划」左右各缩 3px，肉眼看得出来没对齐。
             Margin = Padding.Empty,
@@ -659,43 +681,90 @@ internal sealed partial class MainForm : Form
             Font = Theme.Log,
             DetectUrls = false,
             WordWrap = true,
-            ScrollBars = RichTextBoxScrollBars.Vertical,
+            // 同「积分变化」：滚动能力留着，只是把原生那根白轨道藏掉
+            ScrollBars = RichTextBoxScrollBars.ForcedVertical,
             HideSelection = false,
         };
 
-        // 深色日志块外面套一层同色边框，避免 RichTextBox 的直角直接怼在圆角卡片上
-        var host = new Panel
+        var bar = new SlimScrollBar(Theme.ScrollThumbDark, Theme.ScrollThumbDarkHover)
         {
-            Dock = DockStyle.Fill,
             BackColor = Theme.LogBg,
-            Padding = new Padding(10, 8, 6, 8),
         };
-        host.Controls.Add(_logBox);
 
-        card.Controls.Add(host);
+        card.Controls.Add(new ScrollHost(_logBox, bar));
+        bar.Attach(_logBox);
         return card;
     }
 
-    private static Label NewCaptionLabel(string text) => new()
+    /// <summary>
+    /// 「多行文本 + 右侧细滚动条」的组合容器。
+    ///
+    /// <para>
+    /// 不用 <c>Dock</c> 排这两个子控件：Dock 的处理顺序跟着控件集合的 z-order 走，
+    /// 先加谁后加谁在不同 WinForms 版本上表现并不一致（Fill 有时会把 Dock=Right
+    /// 的位置一起吞掉）。这里自己算两个矩形，行为完全确定。
+    /// </para>
+    /// </summary>
+    private sealed class ScrollHost : Panel
+    {
+        /// <summary>文本与滚动条之间留的缝，避免文字贴着滑块。</summary>
+        private const int Gap = 2;
+
+        private readonly Control _box;
+        private readonly Control _bar;
+
+        public ScrollHost(Control box, Control bar)
+        {
+            // 必须自己 Dock=Fill：不写的话这个 Panel 保持默认的 200x100，
+            // 文本框会被挤成一条 —— 而且布局体检还查不出来（子控件比父容器小，不算越界）。
+            Dock = DockStyle.Fill;
+            BackColor = box.BackColor;
+            Margin = Padding.Empty;
+
+            _box = box;
+            _bar = bar;
+
+            // 位置全部由 OnLayout 算，所以要把 TextBox 上可能存在的 Dock 清掉：
+            // Dock=Fill 的控件每次都会被子容器的布局引擎重新铺满，把我们算好的边界顶掉。
+            box.Dock = DockStyle.None;
+
+            Controls.Add(box);
+            Controls.Add(bar);
+        }
+
+        protected override void OnLayout(LayoutEventArgs levent)
+        {
+            base.OnLayout(levent);
+
+            var barWidth = Math.Min(_bar.Width, Width);
+            var boxWidth = Math.Max(0, Width - barWidth - Gap);
+
+            _box.SetBounds(0, 0, boxWidth, Height);
+            _bar.SetBounds(Width - barWidth, 0, barWidth, Height);
+        }
+    }
+
+    /// <summary>卡片里的"小标题"：比正文小一号、淡一档，只用来给下面的值贴标签。</summary>
+    private static Label NewCaptionLabel(string text, int bottom = 0) => new()
     {
         Text = text,
         Dock = DockStyle.Fill,
         TextAlign = ContentAlignment.MiddleLeft,
-        Font = Theme.Base,
+        Font = Theme.Small,
         ForeColor = Theme.TextMuted,
         BackColor = Color.Transparent,
-        Margin = Padding.Empty,
+        Margin = new Padding(0, 0, 0, bottom),
     };
 
-    private static Label NewValueLabel(Color color) => new()
+    private static Label NewValueLabel(Color color, Font? font = null, int bottom = 0) => new()
     {
         Text = "—",
         Dock = DockStyle.Fill,
         TextAlign = ContentAlignment.MiddleLeft,
-        Font = Theme.Base,
+        Font = font ?? Theme.Base,
         ForeColor = color,
         BackColor = Color.Transparent,
-        Margin = Padding.Empty,
+        Margin = new Padding(0, 0, 0, bottom),
         AutoEllipsis = true,
     };
 
@@ -708,7 +777,7 @@ internal sealed partial class MainForm : Form
             Dock = DockStyle.Fill,
             BackColor = Theme.PageBg,
             AutoScroll = true,
-            Padding = new Padding(PagePadding, PagePadding - 4, PagePadding, PagePadding),
+            Padding = new Padding(PagePadding, 16, PagePadding, PagePadding),
         };
 
         var stack = new TableLayoutPanel
@@ -1010,7 +1079,6 @@ internal sealed partial class MainForm : Form
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
             Title = title,
             Note = note,
-            AccentColor = Theme.Accent,
             Margin = new Padding(0, 0, 0, CardGap),
         };
 
@@ -1037,25 +1105,64 @@ internal sealed partial class MainForm : Form
         return grid;
     }
 
+    /// <summary>
+    /// 表单编辑区的宽度上限：输入框与说明文字共用同一条右边缘。
+    ///
+    /// <para>
+    /// 这个值原先给到 760，结果 1280 宽的窗口右侧常年空着一条 240px 的白 ——
+    /// 卡片明明很宽，内容却只占左边的三分之二，整页看起来"没填满"。
+    /// 现在放到 1120：默认窗口下基本铺满，只有把窗口拉到 2000 以上才会看到上限
+    /// （再宽下去一行字要横跨半个屏幕，读完第一段就找不到第二段的起点了）。
+    /// </para>
+    /// </summary>
+    private const int FieldMaxWidth = 1120;
+
+    /// <summary>
+    /// 说明文字超过这个长度就收进「怎么弄？」里。
+    ///
+    /// <para>
+    /// 阈值取的是"在当前宽度下能排成一行"的数量级：一行读得完的说明直接摆着最省事，
+    /// 超过一行的（尤其「从抓包导入」那段两百字的分步教程）全部折叠 ——
+    /// 需要的人点一下就看到，不需要的人不必每次滚动时都绕过它。
+    /// </para>
+    /// </summary>
+    private const int HintFoldLength = 46;
+
+    /// <summary>
+    /// 标题相对行顶的下移量，用来和输入框里"第一行字"对齐。
+    /// 值 ≈ 输入框内部上留白(10) + 单行文字上下居中的余量，再减去标题自身的行高差。
+    /// 输入框改高度（<c>InputField.PadY</c>）时这里要跟着调。
+    /// </summary>
+    private const int CaptionTopOffset = 12;
+
     /// <summary>表单的一行：左边标题、右边编辑控件，编辑控件下方可选一行说明。</summary>
     private static void AddFieldRow(TableLayoutPanel grid, string caption, Control editor, ref int row, string? hint)
     {
         grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
+        // 输入框外面再套一层"限宽壳"：
+        //   1) 窗口可以拉到 2000px 宽，而一格里塞一条 1600px 的灰条既不便于阅读，
+        //      也让整页看着像表格；壳把编辑区收到 760，与说明文字同一条右边缘。
+        //   2) 壳的高度是固定的（= 输入框自身高度），不会像 AutoSize 行那样被撑开。
+        // 不能用 MaximumSize 限宽：高度写 0 会被当成"高度上限 0"，控件直接塌成 0px。
+        var field = editor is InputField ? new FieldHost(editor) : editor;
+
         // 多行输入框与说明标签自带高度，用 Dock=Fill 会被单元格拉伸变形
-        editor.Dock = editor is InputField { Multiline: true } or Label
-            ? DockStyle.Top
-            : DockStyle.Fill;
+        field.Dock = field is FieldHost or Label ? DockStyle.Top : DockStyle.Fill;
 
         var captionLabel = new Label
         {
             Text = caption,
             Dock = DockStyle.Fill,
-            TextAlign = ContentAlignment.MiddleLeft,
+            // 标题按"第一行"对齐，而不是整格垂直居中。
+            // 一行里除了输入框还有「怎么弄？」和展开后的说明，居中会让标题
+            // 落到输入框下沿偏下的位置（看起来像没对齐）；多行输入框同理，
+            // 标题应该与第一行文字平齐。
+            TextAlign = ContentAlignment.TopLeft,
             Font = Theme.Base,
             ForeColor = Theme.TextBody,
             BackColor = Color.Transparent,
-            Margin = new Padding(0, 4, 10, 4),
+            Margin = new Padding(0, CaptionTopOffset, 10, 4),
             // 万一以后有人把标题列又改窄了，最差也是「Telegram Bot…」，
             // 而不是把字切一半 —— 硬切看起来像渲染坏了。
             AutoEllipsis = true,
@@ -1064,7 +1171,7 @@ internal sealed partial class MainForm : Form
         if (string.IsNullOrEmpty(hint))
         {
             grid.Controls.Add(captionLabel, 0, row);
-            grid.Controls.Add(editor, 1, row);
+            grid.Controls.Add(field, 1, row);
         }
         else
         {
@@ -1074,7 +1181,7 @@ internal sealed partial class MainForm : Form
                 AutoSize = true,
                 AutoSizeMode = AutoSizeMode.GrowAndShrink,
                 ColumnCount = 1,
-                RowCount = 2,
+                RowCount = 3,
                 BackColor = Theme.CardBg,
                 Margin = Padding.Empty,
             };
@@ -1088,19 +1195,79 @@ internal sealed partial class MainForm : Form
             stack.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
             stack.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             stack.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            stack.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
-            editor.Margin = new Padding(0, 3, 0, 0);
-            stack.Controls.Add(editor, 0, 0);
-            stack.Controls.Add(new Label
+            field.Margin = new Padding(0, 3, 0, 0);
+            stack.Controls.Add(field, 0, 0);
+
+            // ---- 说明文字 ----
+            // 短的一行内读得完就直接摆着；长的收进「怎么弄？」，点一下展开。
+            // 折叠不靠自定义控件：把 Label 的 Visible 关掉，TableLayoutPanel 自己就会
+            // 把这一行的高度算成 0（它排 AutoSize 行时会跳过不可见控件），
+            // 省掉一整套"自己量高度"的代码。
+            var fold = hint.Length > HintFoldLength;
+
+            var hintLabel = new Label
             {
                 Text = hint,
                 AutoSize = true,
-                MaximumSize = new Size(760, 0),
+                // 先给一个保守上限，真正的值由下面的 FitHint 按单元格实际宽度刷新。
+                MaximumSize = new Size(FieldMaxWidth, 0),
                 Font = Theme.Small,
                 ForeColor = Theme.TextFaint,
                 BackColor = Color.Transparent,
-                Margin = new Padding(1, 1, 0, 6),
-            }, 0, 1);
+                Margin = new Padding(1, 0, 0, 8),
+                Visible = !fold,
+            };
+
+            // 说明文字的换行宽度必须跟着可用宽度走。
+            // 固定写 FieldMaxWidth 会在窗口比它窄时出问题：标签"以为"自己还有空间，
+            // 于是不换行，然后被 TableLayoutPanel 按单元格宽度硬裁 —— 右边一截字没了。
+            void FitHint()
+            {
+                var available = stack.ClientSize.Width;
+                if (available > 0 && hintLabel.MaximumSize.Width != available)
+                {
+                    hintLabel.MaximumSize = new Size(available, 0);
+                }
+            }
+
+            stack.SizeChanged += (_, _) => FitHint();
+
+            stack.Controls.Add(hintLabel, 0, fold ? 2 : 1);
+
+            if (fold)
+            {
+                var toggle = new LinkLabel
+                {
+                    Text = "怎么弄？",
+                    AutoSize = true,
+                    Font = Theme.Small,
+                    LinkColor = Theme.Accent,
+                    ActiveLinkColor = Theme.AccentDown,
+                    VisitedLinkColor = Theme.Accent,
+                    LinkBehavior = LinkBehavior.HoverUnderline,
+                    BackColor = Color.Transparent,
+                    Margin = new Padding(1, 2, 0, 6),
+                    TabStop = false,
+                };
+
+                toggle.LinkClicked += (_, _) =>
+                {
+                    // 展开前先按当前宽度把换行上限调好，否则第一帧会是按旧上限排的
+                    if (!hintLabel.Visible) FitHint();
+
+                    hintLabel.Visible = !hintLabel.Visible;
+                    toggle.Text = hintLabel.Visible ? "收起" : "怎么弄？";
+
+                    // 展开/收起改变的是这一行的高度。只让 stack 重排不够 ——
+                    // 外层卡片、配置页那层 AutoSize 画布都得跟着重算，
+                    // 否则下面的内容要么叠上来，要么在下面留一大块白。
+                    for (Control? c = stack; c is not null; c = c.Parent) c.PerformLayout();
+                };
+
+                stack.Controls.Add(toggle, 0, 1);
+            }
 
             grid.Controls.Add(captionLabel, 0, row);
             grid.Controls.Add(stack, 1, row);
@@ -1110,103 +1277,218 @@ internal sealed partial class MainForm : Form
     }
 
     /// <summary>把输入框和紧跟其后的一个小控件（如「显示」勾选）排成一行。</summary>
-    private static Control InlineField(Control main, Control trailing)
+    private static Control InlineField(Control main, Control trailing) => new FieldHost(main, trailing);
+
+    /// <summary>
+    /// 表单编辑区的"限宽壳"：编辑控件最宽 760，可选地在右边挂一个小组件。
+    ///
+    /// <para>
+    /// 不用 TableLayoutPanel 是因为其中的 Percent 列会把"显示"推到卡片最右边，
+    /// 与输入框隔着半米远，看不出它是在说这个输入框；它的 AutoSize 行还会把输入框撑高。
+    /// 这里自己量、自己摆：高度恒等于控件自身高度，宽度 = min(760 - 附带控件宽度, 可用宽度)。
+    /// </para>
+    /// </summary>
+    private sealed class FieldHost : Panel
     {
-        var panel = new TableLayoutPanel
+        private const int Gap = 8;
+
+        private readonly Control _main;
+        private readonly Control? _trailing;
+
+        public FieldHost(Control main, Control? trailing = null)
         {
-            Dock = DockStyle.Fill,
-            ColumnCount = 2,
-            RowCount = 1,
-            BackColor = Theme.CardBg,
-            Margin = Padding.Empty,
-        };
-        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-        panel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            BackColor = Theme.CardBg;
+            Margin = Padding.Empty;
 
-        main.Dock = DockStyle.Fill;
-        trailing.Anchor = AnchorStyles.Left;
-        trailing.Margin = new Padding(8, 0, 0, 0);
+            _main = main;
+            _trailing = trailing;
+            _main.Dock = DockStyle.None;
 
-        panel.Controls.Add(main, 0, 0);
-        panel.Controls.Add(trailing, 1, 0);
-        return panel;
+            Controls.Add(main);
+            if (trailing is not null) Controls.Add(trailing);
+
+            Height = main.Height;
+        }
+
+        public override Size GetPreferredSize(Size proposedSize) => new(0, _main.Height);
+
+        protected override void OnLayout(LayoutEventArgs levent)
+        {
+            base.OnLayout(levent);
+
+            var trailingWidth = _trailing?.Width ?? 0;
+            var gap = _trailing is null ? 0 : Gap;
+
+            var available = Math.Max(0, Width - trailingWidth - gap);
+            var width = Math.Min(FieldMaxWidth - trailingWidth - gap, available);
+
+            _main.SetBounds(0, 0, width, _main.Height);
+
+            if (_trailing is not null)
+            {
+                _trailing.Location = new Point(width + Gap, Math.Max(0, (_main.Height - _trailing.Height) / 2));
+            }
+        }
     }
 
     // ---------- 底部 ----------
 
-    private Control BuildButtonBar()
+    private Control BuildFooter()
     {
-        var bar = new FlowLayoutPanel
+        var footer = new Panel
         {
             Dock = DockStyle.Bottom,
-            Height = 60,
-            Padding = new Padding(PagePadding, 13, PagePadding, 13),
-            BackColor = Theme.PageBg,
-            FlowDirection = FlowDirection.LeftToRight,
+            Height = FooterHeight,
+            BackColor = Theme.ChromeBg,
         };
 
-        bar.Paint += (_, e) =>
+        footer.Paint += (_, e) => Theme.DrawHairline(e.Graphics, 0, 0, footer.Width, Theme.Divider);
+
+        var stack = new TableLayoutPanel
         {
-            using var pen = new Pen(Theme.Divider, 1F);
-            e.Graphics.DrawLine(pen, 0, 0, bar.Width, 0);
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 2,
+            BackColor = Theme.ChromeBg,
         };
+        stack.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+        stack.RowStyles.Add(new RowStyle(SizeType.Absolute, ButtonRowHeight));
+        stack.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
 
-        _btnRunNow = new FlatButton { Text = "立即签到", Kind = ButtonKind.Primary, Margin = new Padding(0, 0, 10, 0) };
+        stack.Controls.Add(BuildButtonBar(), 0, 0);
+        stack.Controls.Add(BuildStatusLine(), 0, 1);
+
+        footer.Controls.Add(stack);
+        return footer;
+    }
+
+    /// <summary>
+    /// 按钮行的高度 = 按钮自身 42 + 上下各 12 的呼吸。
+    /// 单独抽出来是因为页脚总高要跟着它走：写死一个 88 之后，
+    /// 按钮一旦加高，行高没变就会把按钮上下削掉 2px。
+    /// </summary>
+    private const int ButtonRowHeight = 66;
+
+    /// <summary>页脚高 = 按钮行 66 + 状态行 28。</summary>
+    private const int FooterHeight = ButtonRowHeight + 28;
+
+    private Control BuildButtonBar()
+    {
+        // 左边是"会改变状态"的动作，右边是"打开某个目录 / 清缓存"这类辅助动作。
+        // 六颗按钮平铺一排时主次完全看不出来，分成两组之后视线先落在钴蓝那颗上。
+        var bar = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 2,
+            RowCount = 1,
+            BackColor = Theme.ChromeBg,
+            // 左边填色按钮与卡片左边缘对齐（22 减掉 2px 的视觉补偿）；
+            // 右边是幽灵按钮，它的文字自带 22px 内边距，所以容器只留 6px，
+            // 文字的右边缘正好落在卡片右边缘上。两侧给同一个 Padding 的话，
+            // 右边那组会整体往左缩进去 16px，看着像飘在半空。
+            Padding = new Padding(PagePadding - 2, 12, 6, 12),
+            Margin = Padding.Empty,
+        };
+        bar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        bar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+
+        _btnRunNow = new FlatButton { Text = "立即签到", Kind = ButtonKind.Primary, Margin = new Padding(0, 0, 12, 0) };
         _btnRunNow.Click += OnRunNowClick;
 
-        _btnSave = new FlatButton { Text = "保存配置", Margin = new Padding(0, 0, 10, 0) };
+        _btnSave = new FlatButton { Text = "保存配置", Margin = new Padding(0, 0, 12, 0) };
         _btnSave.Click += (_, _) => SaveConfigFromForm(showFeedback: true);
 
-        var btnReload = new FlatButton { Text = "重新载入", Kind = ButtonKind.Ghost };
+        var primary = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            BackColor = Theme.ChromeBg,
+            Margin = Padding.Empty,
+            Padding = Padding.Empty,
+            Anchor = AnchorStyles.Left,
+        };
+        primary.Controls.AddRange([_btnRunNow, _btnSave]);
+
+        var btnReload = new FlatButton { Text = "重新载入", Kind = ButtonKind.Ghost, Margin = new Padding(4, 0, 0, 0) };
         btnReload.Click += (_, _) =>
         {
             LoadConfigIntoForm();
             EnqueueLog("[INFO] 已从 config.json 重新载入配置");
         };
 
-        var btnData = new FlatButton { Text = "打开数据目录", Kind = ButtonKind.Ghost };
+        var btnData = new FlatButton { Text = "打开数据目录", Kind = ButtonKind.Ghost, Margin = new Padding(4, 0, 0, 0) };
         btnData.Click += (_, _) => OpenPath(AppPaths.WorkDir);
 
-        var btnLogs = new FlatButton { Text = "打开日志目录", Kind = ButtonKind.Ghost };
+        var btnLogs = new FlatButton { Text = "打开日志目录", Kind = ButtonKind.Ghost, Margin = new Padding(4, 0, 0, 0) };
         btnLogs.Click += (_, _) => OpenPath(_host.Logs.Dir);
 
-        var btnClearCache = new FlatButton { Text = "清空 token 缓存", Kind = ButtonKind.Ghost };
+        var btnClearCache = new FlatButton { Text = "清空 token 缓存", Kind = ButtonKind.Ghost, Margin = new Padding(4, 0, 0, 0) };
         btnClearCache.Click += OnClearCacheClick;
 
-        bar.Controls.AddRange([_btnRunNow, _btnSave, btnReload, btnData, btnLogs, btnClearCache]);
+        // RightToLeft 流：先加的在最右边，于是视觉顺序仍是「重新载入 / 打开… / 清空」
+        var secondary = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            FlowDirection = FlowDirection.RightToLeft,
+            WrapContents = false,
+            BackColor = Theme.ChromeBg,
+            Margin = Padding.Empty,
+            Padding = Padding.Empty,
+            Anchor = AnchorStyles.Right,
+        };
+        secondary.Controls.AddRange([btnClearCache, btnLogs, btnData, btnReload]);
+
+        bar.Controls.Add(primary, 0, 0);
+        bar.Controls.Add(secondary, 1, 0);
         return bar;
     }
 
-    private Control BuildStatusBar()
+    private Control BuildStatusLine()
     {
-        _sbDataDir = new ToolStripStatusLabel
+        var line = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 2,
+            RowCount = 1,
+            BackColor = Theme.ChromeBg,
+            Padding = new Padding(PagePadding, 0, PagePadding, 0),
+            Margin = Padding.Empty,
+        };
+        line.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+        line.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+
+        _sbDataDir = new Label
         {
             Text = "数据目录：—",
-            Spring = true,
+            Dock = DockStyle.Fill,
             TextAlign = ContentAlignment.MiddleLeft,
             ForeColor = Theme.TextFaint,
+            BackColor = Color.Transparent,
             Font = Theme.Small,
+            AutoEllipsis = true,
+            Margin = Padding.Empty,
         };
 
-        _sbState = new ToolStripStatusLabel
+        _sbState = new Label
         {
             Text = "就绪",
+            AutoSize = true,
+            TextAlign = ContentAlignment.MiddleRight,
             ForeColor = Theme.TextFaint,
+            BackColor = Color.Transparent,
             Font = Theme.Small,
+            Anchor = AnchorStyles.Right,
+            Margin = new Padding(12, 0, 0, 0),
         };
 
-        var strip = new StatusStrip
-        {
-            Dock = DockStyle.Bottom,
-            SizingGrip = false,
-            BackColor = Theme.PageBg,
-            ForeColor = Theme.TextFaint,
-            Padding = new Padding(PagePadding - 6, 0, PagePadding - 6, 0),
-        };
-        strip.Items.Add(_sbDataDir);
-        strip.Items.Add(_sbState);
-        return strip;
+        line.Controls.Add(_sbDataDir, 0, 0);
+        line.Controls.Add(_sbState, 1, 0);
+        return line;
     }
 
     private void BuildTray()

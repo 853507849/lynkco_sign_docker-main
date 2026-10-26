@@ -719,6 +719,8 @@ internal sealed partial class MainForm
 
             _cardRuntime.Value = state.Running ? "运行中" : "空闲";
             _cardRuntime.ForeColor = state.Running ? Theme.Warning : Theme.TextStrong;
+            _cardRuntime.Tint = state.Running ? Theme.WarningSoft : null;
+            _cardRuntime.TintBorder = state.Running ? Theme.WarningBorder : null;
             _cardRuntime.Hint = state.Running ? "正在执行签到，请稍候…" : "每 20 秒检查一次 cron";
 
             _pillState.SetState(
@@ -799,6 +801,9 @@ internal sealed partial class MainForm
 
             _cardToday.Value = signed ? "已签到" : "未签到";
             _cardToday.ForeColor = signed ? Theme.Success : Theme.Danger;
+            // 整张卡染成状态色：四张卡里它是唯一会变的那张，也是最该被一眼看到的那张
+            _cardToday.Tint = signed ? Theme.SuccessSoft : Theme.DangerSoft;
+            _cardToday.TintBorder = signed ? Theme.SuccessBorder : Theme.DangerBorder;
             _cardToday.Hint = signed ? "今天已完成，无需再签" : "还没签到，等下次运行";
 
             _cardStreak.Value = streak;
@@ -931,8 +936,15 @@ internal sealed partial class MainForm
 
                 foreach (var record in changed)
                 {
-                    AppendPointsLine(FormatPointsChange(record), DeltaColor(record));
+                    AppendPointsRuns(PointsRuns(record));
                 }
+
+                // 最新的在最上面：追加写入会把视图带到末尾（最老的那条），
+                // 而这张卡的用途是"最近有没有加分"，一进来就该看见今天。
+                // 只在文件真的变了时才走到这里，所以不会每 2 秒把用户滚到一半的位置弹回顶部。
+                _pointsBox.SelectionStart = 0;
+                _pointsBox.SelectionLength = 0;
+                _pointsBox.ScrollToCaret();
             }
             finally
             {
@@ -957,12 +969,28 @@ internal sealed partial class MainForm
     }
 
     private void AppendPointsLine(string text, Color color)
+        => AppendPointsRuns([(text, color)]);
+
+    /// <summary>
+    /// 按"时间(淡) / 增量(彩色) / 当前值(正文) / 触发方式(淡)"分段写入一行。
+    ///
+    /// <para>
+    /// 整行一个颜色时，绿色会把时间戳和当前值一起染绿，一屏扫下去全是色块；
+    /// 拆成段落之后，眼睛只要找绿色的那几个 "+5" 就够了。
+    /// </para>
+    /// </summary>
+    private void AppendPointsRuns(IEnumerable<(string Text, Color Color)> runs)
     {
-        _pointsBox.SelectionStart = _pointsBox.TextLength;
-        _pointsBox.SelectionLength = 0;
-        _pointsBox.SelectionColor = color;
-        _pointsBox.AppendText(text + Environment.NewLine);
+        foreach (var (text, color) in runs)
+        {
+            _pointsBox.SelectionStart = _pointsBox.TextLength;
+            _pointsBox.SelectionLength = 0;
+            _pointsBox.SelectionColor = color;
+            _pointsBox.AppendText(text);
+        }
+
         _pointsBox.SelectionColor = _pointsBox.ForeColor;
+        _pointsBox.AppendText(Environment.NewLine);
     }
 
     /// <summary>
@@ -980,18 +1008,37 @@ internal sealed partial class MainForm
     /// </para>
     /// </summary>
     internal static string FormatPointsChange(PointsRecord record)
+        => string.Concat(PointsRuns(record).Select(run => run.Text));
+
+    /// <summary>
+    /// 一条变化按"时间 / 增量 / 当前值 / 触发方式"切成若干着色片段。
+    ///
+    /// <para>
+    /// 增量写成最前面的 <c>+5 积分</c>、当前值跟在箭头后面：光看增量看不出量级，
+    /// 只写当前值又看不出涨了多少。两者都要，但只有增量该着色 —— 满屏彩色等于没重点。
+    /// </para>
+    /// </summary>
+    private static List<(string Text, Color Color)> PointsRuns(PointsRecord record)
     {
-        var parts = new List<string>();
+        var color = DeltaColor(record);
+        var runs = new List<(string Text, Color Color)> { (record.ShortTime + "  ", Theme.TextFaint) };
+
+        var any = false;
         Add("积分", record.DeltaPoint, record.Point);
         Add("成长值", record.DeltaGrowth, record.Growth);
-        if (parts.Count == 0) Add("累计", record.DeltaIncome, record.Income);
+        if (!any) Add("累计", record.DeltaIncome, record.Income);
 
-        return $"{record.ShortTime}  {string.Join("  ", parts)}  {TriggerLabel(record.Trigger)}";
+        runs.Add(("  " + TriggerLabel(record.Trigger), Theme.TextFaint));
+        return runs;
 
         void Add(string name, int? delta, int? current)
         {
             if (delta is not { } d || d == 0) return;
-            parts.Add($"{d:+#;-#;0} {name} → {current?.ToString() ?? "?"}");
+            if (any) runs.Add(("  ", Theme.TextBody));
+
+            any = true;
+            runs.Add(($"{d:+#;-#;0} {name}", color));
+            runs.Add(($" → {current?.ToString() ?? "?"}", Theme.TextBody));
         }
     }
 
@@ -1076,6 +1123,66 @@ internal sealed partial class MainForm
         var hit = _logBox.Text.Contains(probe, StringComparison.Ordinal);
         lines.Add($"Console 重定向链路: {(hit ? "OK" : "失败")}（RichTextBox 当前 {_logBox.TextLength} 字符）");
         ok &= hit;
+
+        // 2) 细滚动条：Attach 会走一遍 GetScrollInfo + ShowScrollBar（隐藏原生滚动条）。
+        //    这两步是本机 P/Invoke，签名写错了会直接抛 —— 而它挂在日志框上，
+        //    一崩就是整个界面起不来。所以放进自检里跑一次，不要让用户当第一测试人。
+        try
+        {
+            using (var bar = new SlimScrollBar(Theme.ScrollThumb, Theme.ScrollThumbHover))
+            {
+                bar.Attach(_logBox);
+                bar.Sync();
+                bar.Detach();
+            }
+
+            // 真正的坑：RichEdit 每次滚轮 / 按键 / 重排都会把原生滚动条重新显示出来，
+            // 外层的"藏一次"压不住 —— 表现就是滚一下滚轮多出第二根条。
+            //
+            // 这里做 A/B 对照，但必须用一颗"干净"的文本框：界面上的日志框已经挂着
+            // 一根自绘滚动条（它的钩子一直在线），拿它做对照，反例也会被顺手收掉。
+            using var scrollProbe = new RichTextBox
+            {
+                Multiline = true,
+                WordWrap = true,
+                ScrollBars = RichTextBoxScrollBars.ForcedVertical,
+                BorderStyle = BorderStyle.None,
+                Size = new Size(320, 120),
+            };
+
+            _ = scrollProbe.Handle;
+            scrollProbe.Text = string.Join(Environment.NewLine, Enumerable.Range(0, 200).Select(i => $"selftest line {i}"));
+
+            var bareVisible = false;
+            var hookedHidden = false;
+
+            // A：没有钩子，强制显示必须真的显示出来，否则这一步什么也没测到
+            NativeScroll.ShowVertical(scrollProbe.Handle);
+            bareVisible = NativeScroll.IsVerticalVisible(scrollProbe.Handle);
+
+            // B：挂上钩子后再来一次 —— 顺带把用户实际那两个动作都发一遍：
+            //    滚轮（WM_MOUSEWHEEL，delta 在高 16 位）与滚动通知（WM_VSCROLL + SB_LINEDOWN）。
+            using (var probeBar = new SlimScrollBar(Theme.ScrollThumb, Theme.ScrollThumbHover))
+            {
+                probeBar.Attach(scrollProbe);
+                NativeScroll.ShowVertical(scrollProbe.Handle);
+
+                NativeScroll.Send(scrollProbe.Handle, 0x020A, (IntPtr)(unchecked(-120 << 16)), IntPtr.Zero);
+                NativeScroll.Send(scrollProbe.Handle, 0x0115, (IntPtr)1, IntPtr.Zero);
+
+                hookedHidden = !NativeScroll.IsVerticalVisible(scrollProbe.Handle);
+                probeBar.Detach();
+            }
+
+            lines.Add($"细滚动条: Attach/Sync 正常；无钩子强制显示={(bareVisible ? "可见" : "未能显示")}，"
+                + $"挂钩子后={(hookedHidden ? "已收掉" : "仍可见")}");
+            ok &= bareVisible && hookedHidden;
+        }
+        catch (Exception ex)
+        {
+            ok = false;
+            lines.Add($"[X] 细滚动条: {ex.GetType().Name}: {ex.Message}");
+        }
 
         // 2) 配置读写
         try

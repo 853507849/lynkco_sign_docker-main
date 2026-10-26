@@ -65,6 +65,24 @@ internal sealed partial class MainForm
 
             var notes = new List<string>();
 
+            // 不可见的控件不参与体检。
+            // 配置页的「怎么弄？」折叠起来时，那段说明 Label 仍然挂在控件树上、
+            // 但高度被 TableLayoutPanel 排成 0 —— 这是设计如此，不是裁剪。
+            // 不排除掉的话，每次折叠都会稳定产出几条「矮 Npx」的假警报，
+            // 真出问题时反而要在一堆噪音里找。
+            if (!child.Visible)
+            {
+                sb.AppendLine(
+                    Pad($"{new string(' ', depth * 2)}{child.GetType().Name}", 34)
+                    + Pad($"{child.Width}x{child.Height}", 15)
+                    + Pad($"{preferred.Width}x{preferred.Height}", 15)
+                    + Pad("隐藏", 26)
+                    + TextOf(child));
+
+                Walk(child, depth + 1, sb, ref heights, ref widths, ref overflows);
+                continue;
+            }
+
             // 判据 1：自适应高度没给够
             if (child.AutoSize && preferred.Height - child.Height > 1)
             {
@@ -86,13 +104,11 @@ internal sealed partial class MainForm
 
             // 判据 3：子控件比父容器还宽 —— 自绘控件不会被父容器自动裁剪，
             // 会直接画到卡片外面去（输入框戳出圆角边框就是这么来的）。
-            if (child.Visible && child.Width > parent.ClientSize.Width + 1)
+            if (child.Width > parent.ClientSize.Width + 1)
             {
                 overflows++;
                 notes.Add($"超父宽 {child.Width - parent.ClientSize.Width}px");
             }
-
-            if (notes.Count == 0 && !child.Visible) notes.Add("隐藏");
 
             var head = $"{new string(' ', depth * 2)}{child.GetType().Name}";
             var text = TextOf(child);

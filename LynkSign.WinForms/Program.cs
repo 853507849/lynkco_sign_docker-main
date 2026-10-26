@@ -594,22 +594,9 @@ internal static class Program
             for (var i = 0; i < pages.Length; i++)
             {
                 form.SelectTab(i);
-                Pump(10);
+                Pump(12);
 
-                // 配置页比窗口高，截图时临时把窗口拉高，让整页都进画面
-                // —— 否则最下面几张卡片会被视口裁掉，看不出它自己有没有被边框裁。
-                // 拉多高由内容自己算（ConfigContentHeight），不写死像素，
-                // 免得以后加了卡片又得回来调这个数字。
-                if (i == 1)
-                {
-                    const int chrome = 240; // 标题栏 + 页签 + 按钮条 + 状态栏
-                    form.ClientSize = new Size(form.ClientSize.Width, form.ConfigContentHeight + chrome);
-                    Pump(10);
-                }
-
-                using var bitmap = new Bitmap(form.Width, form.Height);
-                form.DrawToBitmap(bitmap, new Rectangle(0, 0, form.Width, form.Height));
-                bitmap.Save(Path.Combine(outDir, $"{pages[i]}.png"), ImageFormat.Png);
+                DrawClient(form, Path.Combine(outDir, $"{pages[i]}.png"));
 
                 // 同时落一份布局体检：实际尺寸 vs 首选尺寸，专门用来抓"底部被裁"。
                 // 图是给人看的，这份文本是给自动化看的（人眼比对太慢，而 CI 里没眼睛）。
@@ -617,6 +604,29 @@ internal static class Program
                     Path.Combine(outDir, $"{pages[i]}-layout.txt"),
                     form.DumpLayout(i),
                     Encoding.UTF8);
+
+                // 配置页比窗口高：不再"把窗口拉高到整页"，而是按视口分屏补拍。
+                //
+                // 以前这里会把 ClientSize 直接设成内容高度（实测 2600 上下），
+                // 而 Windows 会把超过屏幕上限的窗口尺寸夹回来 —— 夹的过程中宽度会被算成 0，
+                // 于是整页塌成 0x0、截出来的只是一条标题栏（不会抛异常，只会静默产出坏图）。
+                // 分屏补拍与 --screenshot-live 用的是同一套坐标，两条验收路径结论才可比。
+                if (i == 1)
+                {
+                    var viewport = Math.Max(1, form.ConfigViewportHeight);
+                    var step = Math.Max(1, viewport - 60);   // 留一点重叠，避免正好切在卡片中间
+                    var shot = 1;
+
+                    for (var offset = step; offset < form.ConfigContentHeight && shot < 8; offset += step)
+                    {
+                        shot++;
+                        form.ScrollConfigTo(offset);
+                        Pump(6);
+                        form.Refresh();
+                        Pump(2);
+                        DrawClient(form, Path.Combine(outDir, $"{pages[i]}-{shot}.png"));
+                    }
+                }
             }
 
             form.Close();
@@ -626,6 +636,30 @@ internal static class Program
         {
             return false;
         }
+    }
+
+    /// <summary>把当前可见客户区离屏画进 PNG（走 WM_PRINT，不依赖屏幕）。</summary>
+    private static void DrawClient(Form form, string path)
+    {
+        // 客户区左上角相对窗口左上角的偏移（等于标题栏高度 + 边框宽度）。
+        // DrawToBitmap 画的是整窗，直接存会把 Windows 的标题栏和那圈深色边框一起带进图里 ——
+        // README 里的预览图应该只有界面本身，不是"某个程序的窗口截图"。
+        // 先画整窗再裁：给 DrawToBitmap 传负的目标坐标会直接抛异常。
+        var origin = form.PointToScreen(Point.Empty);
+        var frame = new Size(origin.X - form.Location.X, origin.Y - form.Location.Y);
+        var client = form.ClientSize;
+
+        using var full = new Bitmap(Math.Max(1, form.Width), Math.Max(1, form.Height));
+        form.DrawToBitmap(full, new Rectangle(0, 0, form.Width, form.Height));
+
+        var cut = new Rectangle(
+            Math.Clamp(frame.Width, 0, Math.Max(0, full.Width - 1)),
+            Math.Clamp(frame.Height, 0, Math.Max(0, full.Height - 1)),
+            Math.Clamp(client.Width, 1, Math.Max(1, full.Width - frame.Width)),
+            Math.Clamp(client.Height, 1, Math.Max(1, full.Height - frame.Height)));
+
+        using var cropped = full.Clone(cut, full.PixelFormat);
+        cropped.Save(path, ImageFormat.Png);
     }
 
     /// <summary>把消息泵转起来，等布局与重绘稳定。</summary>
@@ -661,6 +695,12 @@ internal static class Program
             Directory.CreateDirectory(outDir);
 
             form.StartPosition = FormStartPosition.CenterScreen;
+
+            // 抓屏抓的是"那块屏幕上现在是什么"，所以窗口必须真的在别人上面。
+            // 从后台进程启动时 Windows 的前台锁常常不让我们抢焦点（Activate 会静默失败），
+            // 抓到的就是盖在上面的另一个窗口。临时置顶可以绕开前台锁，代价只是截图期间
+            // 窗口会盖在别人上面几百毫秒；窗口随后就关掉了。
+            form.TopMost = true;
 
             // 窗口必须整窗落在屏内，否则 CopyFromScreen 抓到的屏幕外那部分是垃圾像素
             // （下面配置页宁可滚动分屏补拍也是这个原因）。
