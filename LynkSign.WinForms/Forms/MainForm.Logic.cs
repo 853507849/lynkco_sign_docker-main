@@ -1136,47 +1136,19 @@ internal sealed partial class MainForm
                 bar.Detach();
             }
 
-            // 真正的坑：RichEdit 每次滚轮 / 按键 / 重排都会把原生滚动条重新显示出来，
-            // 外层的"藏一次"压不住 —— 表现就是滚一下滚轮多出第二根条。
-            //
-            // 这里做 A/B 对照，但必须用一颗"干净"的文本框：界面上的日志框已经挂着
-            // 一根自绘滚动条（它的钩子一直在线），拿它做对照，反例也会被顺手收掉。
-            using var scrollProbe = new RichTextBox
-            {
-                Multiline = true,
-                WordWrap = true,
-                ScrollBars = RichTextBoxScrollBars.ForcedVertical,
-                BorderStyle = BorderStyle.None,
-                Size = new Size(320, 120),
-            };
+            // 原生滚动条现在不是"藏起来"，而是"整个推到宿主可视区外面被裁掉"：
+            // 文本框比承载框宽出整整一根原生条，所以文字区（客户区）必须正好等于承载框宽度。
+            //   · 客户区比承载框窄 → 原生条露出来，滚一下就是两根条；
+            //   · 客户区比承载框宽 → 文字铺到细条下面，右边缘的字被压掉。
+            var host = _logBox.Parent;
+            var pad = _logBox.Width - _logBox.ClientSize.Width;
+            var pushedOut = pad > 0 && _logBox.Width > (host?.ClientSize.Width ?? 0);
+            var textArea = host is not null && _logBox.ClientSize.Width == host.ClientSize.Width;
 
-            _ = scrollProbe.Handle;
-            scrollProbe.Text = string.Join(Environment.NewLine, Enumerable.Range(0, 200).Select(i => $"selftest line {i}"));
-
-            var bareVisible = false;
-            var hookedHidden = false;
-
-            // A：没有钩子，强制显示必须真的显示出来，否则这一步什么也没测到
-            NativeScroll.ShowVertical(scrollProbe.Handle);
-            bareVisible = NativeScroll.IsVerticalVisible(scrollProbe.Handle);
-
-            // B：挂上钩子后再来一次 —— 顺带把用户实际那两个动作都发一遍：
-            //    滚轮（WM_MOUSEWHEEL，delta 在高 16 位）与滚动通知（WM_VSCROLL + SB_LINEDOWN）。
-            using (var probeBar = new SlimScrollBar(Theme.ScrollThumb, Theme.ScrollThumbHover))
-            {
-                probeBar.Attach(scrollProbe);
-                NativeScroll.ShowVertical(scrollProbe.Handle);
-
-                NativeScroll.Send(scrollProbe.Handle, 0x020A, (IntPtr)(unchecked(-120 << 16)), IntPtr.Zero);
-                NativeScroll.Send(scrollProbe.Handle, 0x0115, (IntPtr)1, IntPtr.Zero);
-
-                hookedHidden = !NativeScroll.IsVerticalVisible(scrollProbe.Handle);
-                probeBar.Detach();
-            }
-
-            lines.Add($"细滚动条: Attach/Sync 正常；无钩子强制显示={(bareVisible ? "可见" : "未能显示")}，"
-                + $"挂钩子后={(hookedHidden ? "已收掉" : "仍可见")}");
-            ok &= bareVisible && hookedHidden;
+            var pos = pushedOut ? "已推出宿主" : "仍在宿主内";
+            var fit = textArea ? "对齐" : "未对齐";
+            lines.Add($"细滚动条: Attach/Sync 正常；原生条宽={pad}px（{pos}／文字区{fit}）");
+            ok &= pushedOut && textArea;
         }
         catch (Exception ex)
         {

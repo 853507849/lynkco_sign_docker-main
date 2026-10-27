@@ -730,6 +730,11 @@ internal sealed partial class MainForm : Form
 
             Controls.Add(box);
             Controls.Add(bar);
+
+            // 文本框现在是"加宽到宿主之外"的（见 OnLayout），会盖住右边那 10px。
+            // Controls.Add 是往集合末尾追加，而集合下标 0 才是层叠最上面 ——
+            // 不显式提到最前的话，细条会被文本框整个压住，界面上就一根条都看不见了。
+            bar.BringToFront();
         }
 
         protected override void OnLayout(LayoutEventArgs levent)
@@ -737,10 +742,22 @@ internal sealed partial class MainForm : Form
             base.OnLayout(levent);
 
             var barWidth = Math.Min(_bar.Width, Width);
-            var boxWidth = Math.Max(0, Width - barWidth - Gap);
-
-            _box.SetBounds(0, 0, boxWidth, Height);
             _bar.SetBounds(Width - barWidth, 0, barWidth, Height);
+
+            // 关键：不再去"藏"RichEdit 的原生滚动条（它在滚轮、按键、重排时总会自己装回来，
+            // 拦消息永远有漏网，表现就是滚一下冒出第二根条）。改成把它整个推到宿主外面：
+            //   1) 先按宿主宽度摆一次，量出原生条实际吃掉多少像素（DPI 变了也准）；
+            //   2) 再把窗口加宽整整一根条的宽度 —— 文字区仍然是 Width，
+            //      而原生条落在 [Width, Width+pad]，超出宿主可视区，被父窗口裁掉。
+            _box.SetBounds(0, 0, Width, Height);
+
+            var pad = _box.IsHandleCreated ? Math.Max(0, _box.Width - _box.ClientSize.Width) : 0;
+            if (pad <= 0) pad = SystemInformation.VerticalScrollBarWidth;
+
+            _box.SetBounds(0, 0, Width + pad, Height);
+
+            // 文字区现在铺满到 Width，右边 10px 被自绘细条压着 —— 用右内边距把文字收回来
+            if (_box.IsHandleCreated) NativeScroll.SetRightMargin(_box.Handle, barWidth + Gap);
         }
     }
 

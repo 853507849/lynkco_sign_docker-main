@@ -104,7 +104,10 @@ internal sealed partial class MainForm
 
             // 判据 3：子控件比父容器还宽 —— 自绘控件不会被父容器自动裁剪，
             // 会直接画到卡片外面去（输入框戳出圆角边框就是这么来的）。
-            if (child.Width > parent.ClientSize.Width + 1)
+            //
+            // 例外：ScrollHost / InputField 里的文本框是<b>故意</b>比承载框宽出一根
+            // 原生滚动条宽度的 —— 多出来那截正是要被裁掉的原生滚动条，算不上越界。
+            if (child.Width > parent.ClientSize.Width + 1 && !ClipsItsChild(parent))
             {
                 overflows++;
                 notes.Add($"超父宽 {child.Width - parent.ClientSize.Width}px");
@@ -133,6 +136,14 @@ internal sealed partial class MainForm
         // 超宽的不截断（截断了就读不出名字），只补一个空格分隔
         return value + new string(' ', columns - width);
     }
+
+    /// <summary>这些容器会故意把子控件放得比自己宽（多出来的是要裁掉的原生滚动条）。</summary>
+    private static bool ClipsItsChild(Control parent) => parent switch
+    {
+        ScrollHost => true,
+        Panel { Parent: InputField } => true,   // 多行输入框里那层承载框
+        _ => false,
+    };
 
     private static bool ShowsText(Control c)
         => c is Label or Button or FlatCheckBox or StatusPill or MetricCard;

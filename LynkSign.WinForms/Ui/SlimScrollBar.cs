@@ -50,7 +50,6 @@ internal sealed class SlimScrollBar : Control
     private readonly Color _thumbHover;
 
     private RichTextBox? _target;
-    private IDisposable? _suppress;
     private bool _hover;
     private bool _dragging;
     private int _dragOffset;
@@ -87,11 +86,6 @@ internal sealed class SlimScrollBar : Control
         box.Resize += OnTargetChanged;
         box.HandleCreated += OnTargetChanged;
 
-        // 只在外层"按一下"是压不住的：RichEdit 每次滚轮、按键、重排都会把 WS_VSCROLL
-        // 重新装回窗口样式上（自己调 ShowScrollBar(TRUE)），于是滚一下就多出第二根白条。
-        // 这里挂窗口子类化，谁把它装回来就在同一个消息里再藏掉。
-        _suppress = NativeScroll.Suppress(box, Sync);
-
         if (box.IsHandleCreated) Sync();
     }
 
@@ -104,9 +98,6 @@ internal sealed class SlimScrollBar : Control
         box.Resize -= OnTargetChanged;
         box.HandleCreated -= OnTargetChanged;
 
-        _suppress?.Dispose();
-        _suppress = null;
-
         _target = null;
     }
 
@@ -115,10 +106,9 @@ internal sealed class SlimScrollBar : Control
     {
         if (_target is not { IsHandleCreated: true } box) return;
 
-        // RichEdit 在每次重排（改宽度、换字体、内容暴涨）时都可能把滚动条自己重新显示出来，
-        // 所以每次同步都顺手再藏一遍 —— 这个调用很便宜，比盯着 Resize 猜时机可靠。
-        NativeScroll.HideVertical(box.Handle);
-
+        // 注意：这里不再去"藏"原生滚动条。RichEdit 会在各种消息里把它重新显示出来，
+        // 拦截消息永远有漏网 —— 现在改成让宿主（ScrollHost / InputField）把原生条
+        // 整个推到可见区之外裁掉，本类只负责画右边那根细条。
         if (!TryRead(out var info))
         {
             SetOverflow(false);
@@ -320,22 +310,8 @@ internal static class NativeScroll
 {
     internal const int SbVert = 1;
 
-    private const int GWL_STYLE = -16;
-    private const long WS_VSCROLL = 0x00200000L;
-
-    // 会让 RichEdit / Edit 重新计算并显示滚动条的消息。
-    // 覆盖：重排尺寸、改文本、按键、滚轮、滚动通知、滚动到光标、改只读。
-    private const int WM_SIZE = 0x0005;
-    private const int WM_SETTEXT = 0x000C;
-    private const int WM_KEYDOWN = 0x0100;
-    private const int WM_VSCROLL = 0x0115;
-    private const int WM_MOUSEWHEEL = 0x020A;
-    private const int EM_REPLACESEL = 0x00C2;
-    private const int EM_SCROLLCARET = 0x00B7;
-    private const int EM_SETREADONLY = 0x00CF;
-
-    [DllImport("user32.dll", EntryPoint = "ShowScrollBar")]
-    private static extern bool ShowScrollBarCore(IntPtr hWnd, int wBar, bool bShow);
+    private const int EM_SETMARGINS = 0x00D3;
+    private const int EC_RIGHTMARGIN = 0x0002;
 
     [DllImport("user32.dll", EntryPoint = "GetScrollInfo")]
     private static extern bool GetScrollInfoCore(IntPtr hWnd, int fnBar, ref SlimScrollBar.ScrollInfo lpsi);
@@ -343,142 +319,21 @@ internal static class NativeScroll
     [DllImport("user32.dll", EntryPoint = "SendMessageW", CharSet = CharSet.Unicode)]
     private static extern IntPtr SendMessageCore(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
 
-    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
-    private static extern IntPtr GetWindowLongPtr64(IntPtr hWnd, int nIndex);
-
-    [DllImport("user32.dll", EntryPoint = "GetWindowLongW")]
-    private static extern int GetWindowLong32(IntPtr hWnd, int nIndex);
-
-    public static void HideVertical(IntPtr hWnd) => ShowScrollBarCore(hWnd, SbVert, false);
-
-    /// <summary>仅供自检验证钩子用：把原生条重新显示出来，模拟 RichEdit 自己复活它的场景。</summary>
-    internal static void ShowVertical(IntPtr hWnd) => ShowScrollBarCore(hWnd, SbVert, true);
-
     public static bool ReadVertical(IntPtr hWnd, ref SlimScrollBar.ScrollInfo info)
         => GetScrollInfoCore(hWnd, SbVert, ref info);
 
     public static void Send(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam)
         => SendMessageCore(hWnd, msg, wParam, lParam);
 
-    /// <summary>原生竖向滚动条当前是否处于"显示"状态（即窗口样式里还带着 WS_VSCROLL）。</summary>
-    public static bool IsVerticalVisible(IntPtr hWnd)
-    {
-        if (hWnd == IntPtr.Zero) return false;
-
-        var style = IntPtr.Size == 8
-            ? GetWindowLongPtr64(hWnd, GWL_STYLE).ToInt64()
-            : GetWindowLong32(hWnd, GWL_STYLE);
-
-        return (style & WS_VSCROLL) != 0;
-    }
-
     /// <summary>
-    /// 持续压制原生竖向滚动条，直到返回的对象被释放。
+    /// 给 RichEdit / Edit 设右内边距（EM_SETMARGINS）。
     ///
     /// <para>
-    /// 为什么不能只调一次 <see cref="HideVertical"/>：文本框（RichEdit / Edit）在
-    /// <c>WM_SIZE</c>、<c>WM_MOUSEWHEEL</c>、<c>WM_KEYDOWN</c>、<c>EM_SCROLLCARET</c>
-    /// 这些消息里会自己重新计算滚动范围，然后<b>把 WS_VSCROLL 又装回窗口样式</b>。
-    /// 外层按一次、它在内部再打开一次 —— 表现就是"滚一下滚轮突然冒出两根滚动条"。
-    /// </para>
-    ///
-    /// <para>
-    /// 这里用窗口子类化接管这些消息，在原生过程跑完之后检查样式，发现复活就再藏掉，
-    /// 并通过 <paramref name="afterHide"/> 通知宿主重算自绘滑块的位置。
-    /// 检查只是读一个窗口样式位，比每帧重画便宜得多。
+    /// 配合"把原生滚动条推到可视区外"的用法：控件被加宽了整整一根滚动条的宽度，
+    /// 文字区也随之外扩，右边那截会被下面那根自绘细条压住。设一段右内边距把文字收回来，
+    /// 保证文字与细条之间始终留有缝隙。
     /// </para>
     /// </summary>
-    public static IDisposable Suppress(Control control, Action? afterHide = null)
-        => new ScrollBarSuppressor(control, afterHide);
-
-    private static bool Watched(int msg) => msg switch
-    {
-        WM_SIZE or WM_SETTEXT or WM_KEYDOWN or WM_VSCROLL or WM_MOUSEWHEEL
-            or EM_REPLACESEL or EM_SCROLLCARET or EM_SETREADONLY => true,
-        _ => false,
-    };
-
-    /// <summary>挂在控件 HWND 上的"滚动条复活即镇压"钩子。</summary>
-    private sealed class ScrollBarSuppressor : NativeWindow, IDisposable
-    {
-        private readonly Control _control;
-        private readonly Action? _afterHide;
-
-        /// <summary>HideVertical 本身会同步触发 WM_SIZE，不设这个标记会递归回来。</summary>
-        private bool _hiding;
-
-        private bool _disposed;
-
-        public ScrollBarSuppressor(Control control, Action? afterHide)
-        {
-            _control = control;
-            _afterHide = afterHide;
-
-            control.HandleCreated += OnHandleCreated;
-            control.HandleDestroyed += OnHandleDestroyed;
-
-            if (control.IsHandleCreated) AttachTo(control.Handle);
-        }
-
-        private void OnHandleCreated(object? sender, EventArgs e)
-        {
-            if (_disposed || _control.IsDisposed) return;
-            AttachTo(_control.Handle);
-        }
-
-        private void OnHandleDestroyed(object? sender, EventArgs e)
-        {
-            // 句柄没了必须松手，否则下次重建句柄时子类化会挂在已失效的 HWND 上
-            if (Handle != IntPtr.Zero) ReleaseHandle();
-        }
-
-        private void AttachTo(IntPtr handle)
-        {
-            if (handle == IntPtr.Zero) return;
-
-            if (Handle != IntPtr.Zero && Handle != handle) ReleaseHandle();
-            if (Handle != handle) AssignHandle(handle);
-
-            HideIfShown(handle);
-        }
-
-        protected override void WndProc(ref Message m)
-        {
-            base.WndProc(ref m);
-
-            if (_hiding || _disposed || m.HWnd == IntPtr.Zero) return;
-            if (!Watched(m.Msg)) return;
-
-            HideIfShown(m.HWnd);
-        }
-
-        private void HideIfShown(IntPtr handle)
-        {
-            if (!IsVerticalVisible(handle)) return;
-
-            _hiding = true;
-            try
-            {
-                HideVertical(handle);
-            }
-            finally
-            {
-                _hiding = false;
-            }
-
-            // 藏掉之后客户区宽了 17px，文本会重排、滚动位置可能微调 —— 让自绘条重新读一次
-            _afterHide?.Invoke();
-        }
-
-        public void Dispose()
-        {
-            if (_disposed) return;
-
-            _disposed = true;
-            _control.HandleCreated -= OnHandleCreated;
-            _control.HandleDestroyed -= OnHandleDestroyed;
-
-            if (Handle != IntPtr.Zero) ReleaseHandle();
-        }
-    }
+    public static void SetRightMargin(IntPtr hWnd, int pixels)
+        => SendMessageCore(hWnd, EM_SETMARGINS, (IntPtr)EC_RIGHTMARGIN, (IntPtr)(pixels << 16));
 }

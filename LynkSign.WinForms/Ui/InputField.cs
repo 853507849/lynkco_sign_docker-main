@@ -28,8 +28,8 @@ internal sealed class InputField : Panel
     private const int LineHeight = 19;
 
     private readonly TextBox _box;
+    private readonly Panel? _clip;
     private readonly int _preferredHeight;
-    private readonly IDisposable? _suppress;
     private bool _focused;
 
     public InputField(int lines = 1, bool password = false)
@@ -63,6 +63,7 @@ internal sealed class InputField : Panel
         {
             _focused = true;
             _box.BackColor = Theme.CardBg;
+            if (_clip is not null) _clip.BackColor = Theme.CardBg;
             Invalidate();
         };
 
@@ -70,20 +71,30 @@ internal sealed class InputField : Panel
         {
             _focused = false;
             _box.BackColor = Theme.FieldBg;
+            if (_clip is not null) _clip.BackColor = Theme.FieldBg;
             Invalidate();
         };
 
         if (multiline)
         {
             // 多行 TextBox 会自己画一根滚动条（白底 + 上下箭头），压在浅灰的填充块里
-            // 比输入框本身还显眼。这里只把它藏起来 —— 滚动范围与滚轮响应都还在，
-            // 交互一点没变，只是不再有那根白条。
-            // 必须用 Suppress 而不是只藏一次：Edit 控件在滚轮/按键/改尺寸后会把
-            // WS_VSCROLL 装回去，藏一次的话滚两下白条就又回来了。
-            _suppress = NativeScroll.Suppress(_box);
+            // 比输入框本身还显眼。
+            //
+            // 不去"藏"它（Edit 控件在滚轮/按键/改尺寸后会把 WS_VSCROLL 装回去，
+            // 藏一次的后果就是滚两下白条又冒出来，变成两根）。这里垫一层承载框，
+            // 把文本框加宽整整一根滚动条，多出来的那截被承载框裁在可视区之外。
+            _clip = new Panel
+            {
+                BackColor = Theme.FieldBg,
+                Margin = Padding.Empty,
+            };
+            _clip.Controls.Add(_box);
+            Controls.Add(_clip);
         }
-
-        Controls.Add(_box);
+        else
+        {
+            Controls.Add(_box);
+        }
 
         // 单行高度按内部 TextBox 的真实高度算，不能写死一个 36：
         // 150% 缩放下 9pt 的一行要 23px，留给它的空间少 1px 都会被裁掉半行字
@@ -145,13 +156,6 @@ internal sealed class InputField : Panel
     /// </summary>
     public override Size GetPreferredSize(Size proposedSize) => new(0, _preferredHeight);
 
-    protected override void Dispose(bool disposing)
-    {
-        // 钩子会订阅内部 TextBox 的句柄事件，控件销毁时一并松手
-        if (disposing) _suppress?.Dispose();
-        base.Dispose(disposing);
-    }
-
     protected override void OnLayout(LayoutEventArgs levent)
     {
         base.OnLayout(levent);
@@ -162,17 +166,25 @@ internal sealed class InputField : Panel
             Math.Max(0, Width - PadX * 2),
             Math.Max(0, Height - PadY * 2));
 
+        if (_clip is not null)
+        {
+            // 多行：承载框就是文字的可见区；文本框加宽一根原生滚动条，
+            // 多出来的那截（原生条）落在承载框之外，被它裁掉，界面上只剩自己画的那根。
+            _clip.Bounds = inner;
+
+            _box.Bounds = new Rectangle(0, 0, inner.Width, inner.Height);
+
+            var pad = _box.IsHandleCreated ? Math.Max(0, _box.Width - _box.ClientSize.Width) : 0;
+            if (pad <= 0) pad = SystemInformation.VerticalScrollBarWidth;
+
+            _box.Bounds = new Rectangle(0, 0, inner.Width + pad, inner.Height);
+            return;
+        }
+
         // 单行 TextBox 的高度由字体决定、改不了，所以要手动垂直居中，
         // 否则它会贴着单元格顶部，看起来像没对齐。
-        if (_box.Multiline)
-        {
-            _box.Bounds = inner;
-        }
-        else
-        {
-            var h = Math.Min(_box.PreferredHeight, inner.Height);
-            _box.Bounds = new Rectangle(inner.X, inner.Y + (inner.Height - h) / 2, inner.Width, h);
-        }
+        var h = Math.Min(_box.PreferredHeight, inner.Height);
+        _box.Bounds = new Rectangle(inner.X, inner.Y + (inner.Height - h) / 2, inner.Width, h);
     }
 
     protected override void OnPaint(PaintEventArgs e)
