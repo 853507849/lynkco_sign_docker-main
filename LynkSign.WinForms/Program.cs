@@ -589,38 +589,39 @@ internal static class Program
 
             Pump(14);
 
-            var pages = new[] { "01-运行状态", "02-配置" };
+            var pages = new[] { "01-运行状态", "02-签到进行中", "03-签到记录", "04-设置" };
 
             for (var i = 0; i < pages.Length; i++)
             {
                 form.SelectTab(i);
                 Pump(12);
+                EnsureSized(form);
 
                 DrawClient(form, Path.Combine(outDir, $"{pages[i]}.png"));
 
                 // 同时落一份布局体检：实际尺寸 vs 首选尺寸，专门用来抓"底部被裁"。
                 // 图是给人看的，这份文本是给自动化看的（人眼比对太慢，而 CI 里没眼睛）。
+                EnsureSized(form);
                 File.WriteAllText(
                     Path.Combine(outDir, $"{pages[i]}-layout.txt"),
                     form.DumpLayout(i),
                     Encoding.UTF8);
 
-                // 配置页比窗口高：不再"把窗口拉高到整页"，而是按视口分屏补拍。
+                // 设置页比窗口高：不再"把窗口拉高到整页"，而是按视口分屏补拍。
                 //
                 // 以前这里会把 ClientSize 直接设成内容高度（实测 2600 上下），
                 // 而 Windows 会把超过屏幕上限的窗口尺寸夹回来 —— 夹的过程中宽度会被算成 0，
                 // 于是整页塌成 0x0、截出来的只是一条标题栏（不会抛异常，只会静默产出坏图）。
-                // 分屏补拍与 --screenshot-live 用的是同一套坐标，两条验收路径结论才可比。
-                if (i == 1)
+                if (i == 3)
                 {
-                    var viewport = Math.Max(1, form.ConfigViewportHeight);
+                    var viewport = Math.Max(1, form.SettingsViewportHeight);
                     var step = Math.Max(1, viewport - 60);   // 留一点重叠，避免正好切在卡片中间
                     var shot = 1;
 
-                    for (var offset = step; offset < form.ConfigContentHeight && shot < 8; offset += step)
+                    for (var offset = step; offset < form.SettingsContentHeight && shot < 8; offset += step)
                     {
                         shot++;
-                        form.ScrollConfigTo(offset);
+                        form.ScrollSettingsTo(offset);
                         Pump(6);
                         form.Refresh();
                         Pump(2);
@@ -635,6 +636,25 @@ internal static class Program
         catch
         {
             return false;
+        }
+    }
+
+    /// <summary>
+    /// 等窗口客户区回到正常尺寸再画。
+    ///
+    /// <para>
+    /// 踩过：有一次离屏截图把「签到记录」存成了 1×1 的纯白图 —— 那一瞬间客户区正好是 0×0
+    /// （切页、重新布局和一次刷新撞在一起）。这类失败不抛异常、退出码还是 0，
+    /// 只有人工打开图才会发现是空的，所以在这里先等它稳住。
+    /// </para>
+    /// </summary>
+    private static void EnsureSized(Form form)
+    {
+        for (var i = 0; i < 40; i++)
+        {
+            if (form.ClientSize.Width >= 400 && form.ClientSize.Height >= 300) return;
+            Application.DoEvents();
+            Thread.Sleep(50);
         }
     }
 
@@ -719,7 +739,7 @@ internal static class Program
             form.BringToFront();
             Pump(12);
 
-            var pages = new[] { "01-运行状态", "02-配置" };
+            var pages = new[] { "01-运行状态", "02-签到进行中", "03-签到记录", "04-设置" };
 
             for (var i = 0; i < pages.Length; i++)
             {
@@ -727,8 +747,6 @@ internal static class Program
                 Pump(6);
 
                 // 强制整窗重画一次，确保抓到的不是启动过程中的中间态。
-                // 配置页窗口保持原尺寸，靠下面的滚动分屏覆盖整页 ——
-                // 窗口一旦高过屏幕，CopyFromScreen 抓到的屏幕外那半张就是垃圾像素。
                 form.Refresh();
                 Pump(4);
 
@@ -739,20 +757,20 @@ internal static class Program
                     form.DumpLayout(i),
                     Encoding.UTF8);
 
-                // 配置页比窗口高：不拉高窗口（高过屏幕后 CopyFromScreen 抓到的是垃圾像素），
+                // 设置页比窗口高：不拉高窗口（高过屏幕后 CopyFromScreen 抓到的是垃圾像素），
                 // 改成按视口高度分屏滚动补拍，保证整页都被真机像素覆盖过。
-                if (i == 1)
+                if (i == 3)
                 {
-                    var viewport = Math.Max(1, form.ConfigViewportHeight);
+                    var viewport = Math.Max(1, form.SettingsViewportHeight);
                     var step = Math.Max(1, viewport - 60);   // 留一点重叠，避免正好切在卡片中间
                     var shot = 1;
 
-                    for (var offset = step; offset < form.ConfigContentHeight && shot < 8; offset += step)
+                    for (var offset = step; offset < form.SettingsContentHeight && shot < 8; offset += step)
                     {
                         shot++;
-                        form.ScrollConfigTo(offset);
+                        form.ScrollSettingsTo(offset);
                         Pump(5);
-                        GrabClient(form, Path.Combine(outDir, $"02-配置-{shot}.png"));
+                        GrabClient(form, Path.Combine(outDir, $"04-设置-{shot}.png"));
                     }
                 }
             }

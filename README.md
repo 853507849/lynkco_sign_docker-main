@@ -12,7 +12,7 @@
 
 ## ✨ 功能特性
 
-- 🖥️ **桌面界面**：「运行状态 / 配置」两个页签，改完点保存即生效，无需编辑 JSON
+- 🖥️ **桌面界面**：左侧导航四页（运行状态 / 签到进行中 / 签到记录 / 设置），改完点保存即生效，无需编辑 JSON
 - 📌 **托盘常驻**：关掉窗口不退出，静默守在右下角，签到不会因为"窗口关了"而停
 - ⏰ **cron 定时调度**：标准 5 段表达式，保存后 **20 秒内**自动生效，不用重启
 - 🌅 **每天 00:01 自动刷新状态**：跨过零点后「今天签没签」已经归零、连续天数按昨天的结果落定，  
@@ -39,17 +39,27 @@
 
 ## 🖼️ 界面预览
 
-运行状态：四张指标卡 + 运行计划 + **账户积分** + **积分变化** + 实时日志
+左侧导航四项，对应四张页面：
+
+**运行状态**：四张指标卡 + 运行计划 + **账户积分** + 实时日志
 
 ![运行状态](docs/screenshot-status.png)
 
-配置页
+**签到进行中**：五步清单 + 实时输出（深色终端）
 
-![配置](docs/screenshot-config.png)
+![签到进行中](docs/screenshot-running.png)
+
+**签到记录**：月历打卡视图 + 本月统计 + 最近积分变化
+
+![签到记录](docs/screenshot-history.png)
+
+**设置**：账号凭证 / 网络代理 / 原生通道 / 签到策略 / 分享任务 / 通知 / 数据维护
+
+![设置](docs/screenshot-config.png)
 
 > 上图为 1280x900 的真实渲染（`--screenshot` 离屏渲染），数据均为演示用虚构内容，
 > 跑截图时用的是**另一个临时数据目录**（所以底部那行「数据目录」是个临时路径）。
-> 配置页里较长的字段说明收在「怎么弄？」后面，点开才展开；离屏渲染画不出输入框的
+> 设置页里较长的字段说明收在「怎么弄？」后面，点开才展开；离屏渲染画不出输入框的
 > 占位提示（那是系统的 cue banner），所以留空的字段在图上只是一条灰底，实际程序里能看到灰字提示。
 > 如果演示配置里塞了假 token，启动时那次只读的状态刷新会在日志框里留一行红色 `[X]` —— 那是预期的，
 > 真实账号不会出现。
@@ -77,7 +87,7 @@ lynk_sign_docker-main/
 │   ├── Ui/                              #   自绘控件与主题
 │   │   ├── Theme.cs / CardPanel.cs / MetricCard.cs     #   配色、卡片、指标块
 │   │   ├── FlatButton.cs / FlatCheckBox.cs / InputField.cs
-│   │   ├── StatusPill.cs / TabStrip.cs
+│   │   ├── StatusPill.cs / NavRail.cs / PageHeader.cs
 │   ├── Shared/                          # ★ 全部业务源码（Web 版删除后整体搬到这里）
 │   │   ├── Configuration/
 │   │   │   ├── AppConfig.cs             #   config.json 强类型模型 + 宽容 JSON 转换器
@@ -225,7 +235,7 @@ powershell -ExecutionPolicy Bypass -File LynkSign.WinForms\packaging\build-insta
 | `--fetch-article`        | 实拉一次探索广场文章流，打印取到的最新一篇，用来验证「自动拉取文章 ID」这条链路                                                                  | 0=取到文章 |
 | `--refresh-status`       | 只拉一次最新签到状态（`day/info` + 连续天数 / 补签卡 + 账户信息），**不签到、不推送**。与「每天 00:01 自动刷新」是同一个任务，日志写进 `logs\run-*-status.log` | 0=拉到状态 |
 | `--import-har <文件>`      | 从抓包文件（`.har`）里认出短信登录那一条，把 `refreshToken` 与 `deviceId` 一起写回 `config.json`（报告写进 `import-har.log`）            | 0=导入成功 |
-| `--screenshot <目录>`      | 把两个页签**离屏**渲染成 PNG（调外观用）                                                                                   |    —   |
+| `--screenshot <目录>`      | 把四个页面**离屏**渲染成 PNG（调外观用）                                                                                   |    —   |
 | `--screenshot-live <目录>` | 真开一次窗口、抓屏存 PNG                                                                                             |    —   |
 
 > `--run-once` 的退出码沿用签到流程自己的语义：  

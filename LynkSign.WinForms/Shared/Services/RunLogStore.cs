@@ -61,6 +61,29 @@ public sealed class RunLogStore
         }
     }
 
+    /// <summary>
+    /// 最新一条日志的文件名（目录空就返回 null）。
+    /// <para>
+    /// 只做文件名比较、不读文件内容 —— 这个值要跟着界面每两秒刷一次，
+    /// 走 <see cref="List"/> 会把每个文件都打开一遍读退出码，纯属浪费。
+    /// 文件名是定宽时间戳，所以字符串比较就等于时间比较。
+    /// </para>
+    /// </summary>
+    public string? NewestName()
+    {
+        if (!Directory.Exists(Dir)) return null;
+
+        string? best = null;
+        foreach (var path in Directory.EnumerateFiles(Dir, "run-*.log"))
+        {
+            var name = Path.GetFileName(path);
+            if (!NamePattern.IsMatch(name)) continue;
+            if (best is null || string.CompareOrdinal(name, best) > 0) best = name;
+        }
+
+        return best;
+    }
+
     /// <summary>列出日志（按名称倒序，等价 Python 的 <c>out.sort(..., reverse=True)</c>）。</summary>
     public List<LogItem> List()
     {

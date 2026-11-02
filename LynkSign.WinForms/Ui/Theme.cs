@@ -1,4 +1,5 @@
 using System.Drawing.Drawing2D;
+using System.Drawing.Text;
 
 namespace LynkSign.WinForms.Ui;
 
@@ -11,8 +12,9 @@ namespace LynkSign.WinForms.Ui;
 /// </para>
 ///
 /// <para>
-/// 设计语言：<b>墨黑 + 钴蓝</b>。三档中性灰承担 95% 的面积（页面 / 卡片 / 描边），
-/// 只有「主操作」与「当前状态」才允许出现彩色；彩色一旦到处都是，就没人看得见重点了。
+/// 设计语言：<b>墨绿主色 + 深色导航栏</b>。深色侧栏（<see cref="RailBg"/>）把导航与内容
+/// 分成两块，内容区三档中性灰承担 95% 的面积（页面 / 卡片 / 描边）；
+/// 只有「主操作」与「当前状态」才允许出现彩色 —— 彩色一旦到处都是，就没人看得见重点了。
 /// 阴影一律不用 —— 一块 0.5px 的冷灰细边 + 一档背景差，在 150% 缩放的屏幕上比
 /// 任何 box-shadow 都干净（钝阴影会糊成一圈脏边）。
 /// </para>
@@ -24,92 +26,147 @@ namespace LynkSign.WinForms.Ui;
 internal static class Theme
 {
     // ---------- 表面（从外到内三层） ----------
-    /// <summary>顶栏 / 页签 / 页脚的外壳底色。与内容区拉开一档，形成"框"。</summary>
-    public static readonly Color ChromeBg = Color.FromArgb(0xFF, 0xFF, 0xFF);
+    /// <summary>左侧导航栏底色。整屏唯一的深色面，负责"把导航和内容分开"。</summary>
+    public static readonly Color RailBg = Color.FromArgb(0x10, 0x17, 0x20);
+    public static readonly Color RailItemHover = Color.FromArgb(0x1A, 0x24, 0x2E);
+    public static readonly Color RailIcon = Color.FromArgb(0x7E, 0x8E, 0x9E);
+    public static readonly Color RailDivider = Color.FromArgb(0x22, 0x2C, 0x36);
 
     /// <summary>内容区画布：比纯白冷一档，卡片浮在上面才立得住。</summary>
-    public static readonly Color PageBg = Color.FromArgb(0xF5, 0xF6, 0xF9);
+    public static readonly Color PageBg = Color.FromArgb(0xF6, 0xF7, 0xFA);
 
     public static readonly Color CardBg = Color.White;
 
     /// <summary>输入框的填充底色（无边框，靠底色分隔）。</summary>
     public static readonly Color FieldBg = Color.FromArgb(0xF3, 0xF5, 0xF9);
 
-    public static readonly Color CardBorder = Color.FromArgb(0xE7, 0xEA, 0xF0);
-    public static readonly Color Divider = Color.FromArgb(0xEC, 0xEE, 0xF3);
+    public static readonly Color CardBorder = Color.FromArgb(0xE4, 0xE9, 0xF1);
+    public static readonly Color Divider = Color.FromArgb(0xEC, 0xEF, 0xF4);
     public static readonly Color HoverBg = Color.FromArgb(0xF1, 0xF3, 0xF7);
     public static readonly Color PressBg = Color.FromArgb(0xE7, 0xEA, 0xF1);
 
-    /// <summary>弱操作按钮（页脚那几颗「打开目录 / 重新载入」）的常态底色。</summary>
-    public static readonly Color ChipBg = Color.FromArgb(0xF4, 0xF6, 0xFB);
-    public static readonly Color ChipHover = Color.FromArgb(0xE9, 0xED, 0xF6);
-    public static readonly Color ChipBorder = Color.FromArgb(0xE3, 0xE8, 0xF1);
+    /// <summary>外壳底色（滚动条槽、页脚等）。</summary>
+    public static readonly Color ChromeBg = PageBg;
+
+    /// <summary>弱操作按钮（幽灵按钮）的常态底色。</summary>
+    public static readonly Color ChipBg = Color.FromArgb(0xF4, 0xF6, 0xFA);
+    public static readonly Color ChipHover = Color.FromArgb(0xEB, 0xEF, 0xF6);
+    public static readonly Color ChipBorder = Color.FromArgb(0xE4, 0xE9, 0xF1);
     public static readonly Color ChipBorderHover = Color.FromArgb(0xCF, 0xD7, 0xE6);
 
     // ---------- 文字（四档，从重到轻） ----------
-    public static readonly Color TextStrong = Color.FromArgb(0x0F, 0x13, 0x19);
-    public static readonly Color TextBody = Color.FromArgb(0x3A, 0x41, 0x4D);
-    public static readonly Color TextMuted = Color.FromArgb(0x6B, 0x74, 0x84);
-    public static readonly Color TextFaint = Color.FromArgb(0x98, 0xA0, 0xAE);
+    public static readonly Color TextStrong = Color.FromArgb(0x00, 0x14, 0x1C);
+    public static readonly Color TextBody = Color.FromArgb(0x35, 0x42, 0x4D);
+    public static readonly Color TextMuted = Color.FromArgb(0x7E, 0x8E, 0x9E);
+    public static readonly Color TextFaint = Color.FromArgb(0xA6, 0xAF, 0xBA);
 
-    // ---------- 主题色：钴蓝 ----------
-    // 比原来的 #2452D8 亮一档、饱和度略降：深钴蓝在浅灰画布上偏"企业后台"，
-    // 亮一档之后与白卡、冷灰边的关系更松，整屏看着不那么紧绷。
-    public static readonly Color Accent = Color.FromArgb(0x3B, 0x6E, 0xF5);
-    public static readonly Color AccentLight = Color.FromArgb(0x5E, 0x8B, 0xF8);
-    public static readonly Color AccentHover = Color.FromArgb(0x2F, 0x5E, 0xE3);
-    public static readonly Color AccentHoverLight = Color.FromArgb(0x4E, 0x7D, 0xF6);
-    public static readonly Color AccentDown = Color.FromArgb(0x25, 0x49, 0xBA);
-    public static readonly Color AccentSoft = Color.FromArgb(0xEF, 0xF3, 0xFE);
+    // ---------- 主题色：墨绿 ----------
+    public static readonly Color Accent = Color.FromArgb(0x0E, 0x9F, 0x84);
+    public static readonly Color AccentLight = Color.FromArgb(0x12, 0xB0, 0xA4);
+    public static readonly Color AccentHover = Color.FromArgb(0x0C, 0x8C, 0x75);
+    public static readonly Color AccentHoverLight = Color.FromArgb(0x11, 0xA0, 0x95);
+    public static readonly Color AccentDown = Color.FromArgb(0x0A, 0x76, 0x63);
+    public static readonly Color AccentSoft = Color.FromArgb(0xE9, 0xF6, 0xF2);
+    public static readonly Color AccentSoftBorder = Color.FromArgb(0xCB, 0xE9, 0xE1);
 
     // ---------- 语义色 ----------
-    public static readonly Color Success = Color.FromArgb(0x0E, 0x9B, 0x6C);
-    public static readonly Color SuccessSoft = Color.FromArgb(0xE8, 0xF7, 0xF0);
-    public static readonly Color SuccessBorder = Color.FromArgb(0xC2, 0xE8, 0xD8);
-    public static readonly Color Danger = Color.FromArgb(0xD8, 0x39, 0x3F);
-    public static readonly Color DangerSoft = Color.FromArgb(0xFD, 0xEC, 0xEC);
-    public static readonly Color DangerBorder = Color.FromArgb(0xF6, 0xC9, 0xC9);
-    public static readonly Color Warning = Color.FromArgb(0xC0, 0x79, 0x0A);
-    public static readonly Color WarningSoft = Color.FromArgb(0xFC, 0xF3, 0xE2);
-    public static readonly Color WarningBorder = Color.FromArgb(0xF2, 0xDD, 0xB6);
+    public static readonly Color Success = Color.FromArgb(0x0E, 0x9F, 0x84);
+    public static readonly Color SuccessSoft = Color.FromArgb(0xED, 0xF8, 0xF4);
+    public static readonly Color SuccessBorder = Color.FromArgb(0xCD, 0xEB, 0xE0);
+    public static readonly Color Danger = Color.FromArgb(0xA6, 0x52, 0x3E);
+    public static readonly Color DangerSoft = Color.FromArgb(0xF9, 0xEC, 0xE8);
+    public static readonly Color DangerBorder = Color.FromArgb(0xEF, 0xD5, 0xCC);
+    public static readonly Color Warning = Color.FromArgb(0xA9, 0x77, 0x2A);
+    public static readonly Color WarningSoft = Color.FromArgb(0xFD, 0xF4, 0xE3);
+    public static readonly Color WarningBorder = Color.FromArgb(0xF3, 0xE2, 0xBE);
 
-    // ---------- 日志面板（深色终端风，整块卡片都是它） ----------
-    public static readonly Color LogBg = Color.FromArgb(0x0F, 0x13, 0x1A);
-    public static readonly Color LogBorder = Color.FromArgb(0x1C, 0x22, 0x2E);
-    public static readonly Color LogText = Color.FromArgb(0xC2, 0xCA, 0xD6);
-    public static readonly Color LogErr = Color.FromArgb(0xFF, 0x90, 0x86);
-    public static readonly Color LogWarn = Color.FromArgb(0xFF, 0xCC, 0x6E);
-    public static readonly Color LogOk = Color.FromArgb(0x74, 0xE0, 0xA4);
-    public static readonly Color LogInfo = Color.FromArgb(0x8F, 0xB9, 0xFF);
-    public static readonly Color LogFaint = Color.FromArgb(0x5F, 0x69, 0x78);
+    /// <summary>深色卡片（侧栏同色系）上用的文字。</summary>
+    public static readonly Color OnDark = Color.FromArgb(0xEE, 0xF2, 0xF5);
+    public static readonly Color OnDarkMuted = Color.FromArgb(0x8C, 0x9A, 0xA7);
+    public static readonly Color OnDarkFaint = Color.FromArgb(0x5B, 0x69, 0x77);
+
+    /// <summary>深色面上的描边（深色卡片 / 深色日志块共用）。</summary>
+    public static readonly Color DarkBorder = Color.FromArgb(0x1B, 0x24, 0x30);
+
+    // ---------- 日志面板：两套皮肤 ----------
+    // 设计稿里同一份输出在两页上是两种底：状态页的「运行日志」是白卡，
+    // 「签到进行中」的「运行输出」是深色终端。所以配色必须成对给 ——
+    // 只留一套 LogText 的话，换底之后要么白字白底、要么黑字黑底。
+    // 白卡皮肤（运行状态）
+    public static readonly Color LogBg = Color.FromArgb(0xFB, 0xFC, 0xFD);
+    public static readonly Color LogBorder = Color.FromArgb(0xE4, 0xE9, 0xF1);
+    public static readonly Color LogText = Color.FromArgb(0x1F, 0x2A, 0x37);
+    public static readonly Color LogErr = Color.FromArgb(0xA6, 0x52, 0x3E);
+    public static readonly Color LogWarn = Color.FromArgb(0xA9, 0x77, 0x2A);
+    public static readonly Color LogOk = Color.FromArgb(0x0E, 0x9F, 0x84);
+    public static readonly Color LogInfo = Color.FromArgb(0x6B, 0x76, 0x82);
+    public static readonly Color LogFaint = Color.FromArgb(0x9C, 0xA6, 0xB2);
+
+    // 深色终端皮肤（签到进行中）
+    public static readonly Color TermBg = Color.FromArgb(0x10, 0x17, 0x20);
+    public static readonly Color TermBorder = Color.FromArgb(0x1B, 0x24, 0x30);
+    public static readonly Color TermText = Color.FromArgb(0xB9, 0xC4, 0xD0);
+    public static readonly Color TermErr = Color.FromArgb(0xFF, 0x9C, 0x8A);
+    public static readonly Color TermWarn = Color.FromArgb(0xF0, 0xC0, 0x69);
+    public static readonly Color TermOk = Color.FromArgb(0x57, 0xD9, 0xB8);
+    public static readonly Color TermInfo = Color.FromArgb(0x8F, 0xB9, 0xFF);
+    public static readonly Color TermFaint = Color.FromArgb(0x5F, 0x69, 0x78);
 
     // ---------- 自绘滚动条 ----------
-    // 原生滚动条是一根 17px 的白轨道 + 三颗灰箭头，压在深色日志卡上像贴了块胶布。
-    // 自绘之后只剩一根 6px 圆角滑块，浅色卡片与深色卡片各一套。
     public static readonly Color ScrollThumb = Color.FromArgb(0xD3, 0xD9, 0xE4);
     public static readonly Color ScrollThumbHover = Color.FromArgb(0xB5, 0xBE, 0xCE);
     public static readonly Color ScrollThumbDark = Color.FromArgb(0x2E, 0x38, 0x4A);
     public static readonly Color ScrollThumbDarkHover = Color.FromArgb(0x44, 0x51, 0x68);
 
     // ---------- 字体 ----------
+    // 设计稿用的是 Noto Sans SC / Inter Tight / JetBrains Mono。前两个在这台机器上
+    // 不一定装了，所以按"有就用、没有就退到系统自带"的顺序挑一次，挑完缓存住 ——
+    // 每次 new Font 都去枚举已安装字体会让界面启动慢几百毫秒。
     public const string UiFamily = "Microsoft YaHei UI";
 
-    public static readonly Font Base = new(UiFamily, 9F);
-    public static readonly Font BaseBold = new(UiFamily, 9F, FontStyle.Bold);
-    public static readonly Font Small = new(UiFamily, 8.25F);
-    public static readonly Font SmallBold = new(UiFamily, 8.25F, FontStyle.Bold);
-    public static readonly Font Title = new(UiFamily, 12F, FontStyle.Bold);
-    public static readonly Font Section = new(UiFamily, 9.75F, FontStyle.Bold);
-    public static readonly Font Meter = new(UiFamily, 12F, FontStyle.Bold);
-    public static readonly Font Metric = new(UiFamily, 20F, FontStyle.Bold);
-    public static readonly Font Log = new("Consolas", 8.75F);
+    /// <summary>界面正文字族：优先 Noto Sans SC（设计稿），否则微软雅黑。</summary>
+    public static readonly string SansFamily = PickFamily(
+        ["Noto Sans SC", "Microsoft YaHei UI", "Segoe UI"], UiFamily);
 
-    // ---------- 间距与圆角 ----------
-    public const int CardPadding = 18;
-    public const int CardRadius = 14;
-    public const int FieldRadius = 9;
-    public const int ButtonRadius = 9;
-    public const int Gap = 14;
+    /// <summary>数字字族：优先 Inter Tight（数字更紧凑、字形更挺拔）。</summary>
+    public static readonly string NumberFamily = PickFamily(
+        ["Inter Tight", "Inter", "Segoe UI", "Microsoft YaHei UI"], "Segoe UI");
+
+    /// <summary>等宽字族：优先 JetBrains Mono（设计稿），退到 Cascadia / Consolas。</summary>
+    public static readonly string MonoFamily = PickFamily(
+        ["JetBrains Mono", "Cascadia Mono", "Consolas", "Courier New"], "Consolas");
+
+    public static readonly Font Base = new(SansFamily, 9F);
+    public static readonly Font BaseBold = new(SansFamily, 9F, FontStyle.Bold);
+    public static readonly Font Small = new(SansFamily, 8.25F);
+    public static readonly Font SmallBold = new(SansFamily, 8.25F, FontStyle.Bold);
+    public static readonly Font Title = new(SansFamily, 14F, FontStyle.Bold);
+    public static readonly Font Section = new(SansFamily, 10F, FontStyle.Bold);
+    public static readonly Font Meter = new(NumberFamily, 12F, FontStyle.Bold);
+    public static readonly Font Metric = new(NumberFamily, 21F, FontStyle.Bold);
+    public static readonly Font Log = new(MonoFamily, 8.25F);
+
+    /// <summary>页面大标题（"运行状态"这一行）。</summary>
+    public static readonly Font H1 = new(SansFamily, 16F, FontStyle.Bold);
+
+    /// <summary>数字专用（积分余额那种 32px 级的巨号字）。</summary>
+    public static readonly Font Display = new(NumberFamily, 24F, FontStyle.Bold);
+
+    /// <summary>时间戳 / 路径 / cron 这类机器文本。</summary>
+    public static readonly Font Mono = new(MonoFamily, 8.25F);
+    public static readonly Font MonoSmall = new(MonoFamily, 7.5F);
+
+    // ---------- 间距与圆角（对应设计稿的 6/8/10/12/99 圆角阶梯） ----------
+    public const int PagePadding = 24;
+    public const int CardPadding = 20;
+    public const int CardRadius = 12;
+    public const int FieldRadius = 8;
+    public const int ButtonRadius = 10;
+    public const int ChipRadius = 6;
+    public const int Gap = 12;
+
+    /// <summary>页面左右留白（卡片与标题共用同一条左边缘）。</summary>
+    public const int PadX = 24;
 
     // ==================================================================
     //  绘制原语
@@ -141,9 +198,6 @@ internal static class Theme
     /// 对策就是每帧先无视现有裁剪、把整个 ClientRectangle 刷成底色，再往上画形状。
     /// </para>
     /// </summary>
-    /// <param name="g">当前绘制上下文。</param>
-    /// <param name="control">要刷底的控件（取它的 ClientRectangle 与底色）。</param>
-    /// <param name="color">指定底色；不传则用控件自身 BackColor，透明时向上取父容器底色。</param>
     public static void ClearBackdrop(Graphics g, Control control, Color? color = null)
     {
         var back = color ?? control.BackColor;
@@ -157,8 +211,6 @@ internal static class Theme
                 : PageBg;
         }
 
-        // 关键：把裁剪区换成整个客户区（Replace），这样 Clear 才能覆盖整块缓冲区，
-        // 而不是只覆盖当前失效的那一小块。
         g.SetClip(control.ClientRectangle, CombineMode.Replace);
         g.Clear(back);
     }
@@ -251,4 +303,35 @@ internal static class Theme
     /// <summary>这块底色算不算"深色"—— 决定卡片标题用浅字还是深字。</summary>
     public static bool IsDark(Color c)
         => (0.299 * c.R + 0.587 * c.G + 0.114 * c.B) < 128;
+
+    /// <summary>两个颜色按比例混合（0 = a，1 = b）。用于淡色底上的细边。</summary>
+    public static Color Mix(Color a, Color b, double t)
+    {
+        t = Math.Clamp(t, 0, 1);
+        return Color.FromArgb(
+            (int)Math.Round(a.R + (b.R - a.R) * t),
+            (int)Math.Round(a.G + (b.G - a.G) * t),
+            (int)Math.Round(a.B + (b.B - a.B) * t));
+    }
+
+    /// <summary>在已安装字体里挑第一个存在的；都没有就用兜底。</summary>
+    private static string PickFamily(string[] candidates, string fallback)
+    {
+        try
+        {
+            using var installed = new InstalledFontCollection();
+            var names = installed.Families.Select(f => f.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var candidate in candidates)
+            {
+                if (names.Contains(candidate)) return candidate;
+            }
+        }
+        catch
+        {
+            // 枚举字体失败（极简系统 / 权限受限）就用兜底，不影响启动
+        }
+
+        return fallback;
+    }
 }

@@ -14,26 +14,33 @@ namespace LynkSign.WinForms.Forms;
 ///
 /// <para>两条判据，足以抓出绝大多数自绘布局 bug：</para>
 /// <list type="number">
-///   <item><b>AutoSize 的控件，实际高度必须 ≥ 首选高度</b> —— 矮了就是父容器没给够，
-///         底部内容会被压掉（典型场景：卡片自己算的高度里漏算了标题带）。</item>
+///   <item><b>AutoSize 的控件，实际高度必须 ≥ 首选高度</b> —— 矮了就是父容器没给够。</item>
 ///   <item><b>不会自动省略号的文字控件，实际宽度必须 ≥ 首选宽度</b> ——
-///         窄了文字会被硬生生切掉半截（"Telegram Bot Token" 只剩 "Telegram B"）。
-///         本身带 AutoEllipsis 的控件会退化成 "+…"，只提示不报错。</item>
+///         窄了文字会被硬生生切掉半截。</item>
 /// </list>
 /// </summary>
 internal sealed partial class MainForm
 {
-    /// <summary>导出指定页签的控件树与布局体检结果。</summary>
-    /// <param name="tabIndex">0 = 运行状态，1 = 配置。</param>
-    internal string DumpLayout(int tabIndex)
+    private static readonly string[] PageNames = ["运行状态", "签到进行中", "签到记录", "设置"];
+
+    /// <summary>导出指定页面的控件树与布局体检结果。</summary>
+    /// <param name="pageIndex">0 运行状态 / 1 签到进行中 / 2 签到记录 / 3 设置。</param>
+    internal string DumpLayout(int pageIndex)
     {
-        var page = tabIndex == 0 ? _tabStatus : _tabConfig;
+        var page = pageIndex switch
+        {
+            0 => _pageStatus,
+            1 => _pageRunning,
+            2 => _pageHistory,
+            _ => _pageSettings,
+        };
+
+        var name = PageNames[Math.Clamp(pageIndex, 0, PageNames.Length - 1)];
         var sb = new StringBuilder();
 
-        sb.AppendLine($"页签: {(tabIndex == 0 ? "运行状态" : "配置")}");
-        sb.AppendLine($"页面可视区: {page.ClientSize.Width}x{page.ClientSize.Height}"
-            + (page is ScrollableControl sc ? $", AutoScroll={sc.AutoScroll}, 内容区高={sc.DisplayRectangle.Height}" : ""));
-        sb.AppendLine($"整页内容高度: {ConfigContentHeight}");
+        sb.AppendLine($"页面: {name}");
+        sb.AppendLine($"可视区: {page.ClientSize.Width}x{page.ClientSize.Height}"
+            + (pageIndex == 3 ? $", 内容高={SettingsContentHeight}" : ""));
         sb.AppendLine(new string('-', 118));
         sb.AppendLine($"{"控件".PadRight(34)}{"实际".PadRight(15)}{"首选".PadRight(15)}{"结论".PadRight(26)}文字");
         sb.AppendLine(new string('-', 118));
@@ -68,8 +75,6 @@ internal sealed partial class MainForm
             // 不可见的控件不参与体检。
             // 配置页的「怎么弄？」折叠起来时，那段说明 Label 仍然挂在控件树上、
             // 但高度被 TableLayoutPanel 排成 0 —— 这是设计如此，不是裁剪。
-            // 不排除掉的话，每次折叠都会稳定产出几条「矮 Npx」的假警报，
-            // 真出问题时反而要在一堆噪音里找。
             if (!child.Visible)
             {
                 sb.AppendLine(
@@ -133,7 +138,6 @@ internal sealed partial class MainForm
         var width = value.Sum(ch => ch > 0x2E7F ? 2 : 1);
         if (width >= columns) return value + " ";
 
-        // 超宽的不截断（截断了就读不出名字），只补一个空格分隔
         return value + new string(' ', columns - width);
     }
 
@@ -146,16 +150,16 @@ internal sealed partial class MainForm
     };
 
     private static bool ShowsText(Control c)
-        => c is Label or Button or FlatCheckBox or StatusPill or MetricCard;
+        => c is Label or Button or FlatCheckBox or StatusPill or MetricCard or ChipLabel;
 
     /// <summary>宽度不够时能优雅降级（换行或省略号）的控件，不算截断。</summary>
     private static bool WrapsOrEllipsizes(Control c) => c switch
     {
-        // LinkLabel 也是 Label，一并被这条覆盖
         Label { AutoEllipsis: true } => true,
         FlatCheckBox => true,   // 勾选框文字超宽自己换行
         MetricCard => true,     // 大数字卡按点定位自绘，不参与矩形约束
         StatusPill => true,     // 胶囊按文字自适应宽度
+        ChipLabel => true,      // 小标签按文字自适应宽度
         FlatButton => true,     // 按钮按文字算首选宽度，外部只会给更大
         _ => c.Text.Contains('\n'),
     };
@@ -166,6 +170,7 @@ internal sealed partial class MainForm
         {
             CardPanel card => card.Title,
             MetricCard metric => metric.Caption,
+            ChipLabel chip => chip.Caption,
             _ => c.Text,
         };
 
@@ -174,23 +179,17 @@ internal sealed partial class MainForm
         return text.Length > 22 ? text[..22] + "…" : text;
     }
 
-    /// <summary>整页内容需要多高（配置页截图时按它拉窗口）。</summary>
-    internal int ConfigContentHeight => _configCanvas.PreferredSize.Height;
+    /// <summary>设置页整页内容需要多高（截图时按它分屏补拍）。</summary>
+    internal int SettingsContentHeight => _settingsCanvas.PreferredSize.Height;
 
-    /// <summary>配置页当前的可视高度（分屏补拍时按它算步长）。</summary>
-    internal int ConfigViewportHeight => _tabConfig.ClientSize.Height;
+    /// <summary>设置页当前的可视高度。</summary>
+    internal int SettingsViewportHeight => _settingsScroll.ClientSize.Height;
 
     /// <summary>
-    /// 把配置页滚动到指定偏移（传内容坐标，内部会转成 AutoScrollPosition 需要的值）。
-    ///
-    /// <para>
-    /// <c>--screenshot-live</c> 靠它分屏拍完整页。
-    /// 之所以不把窗口直接拉高：窗口一旦高过屏幕，<c>CopyFromScreen</c> 抓到的
-    /// 屏幕外那半张就是垃圾像素，白白多出一堆误判。
-    /// </para>
+    /// 把设置页滚动到指定偏移（传内容坐标，内部会转成 AutoScrollPosition 需要的值）。
     /// </summary>
-    internal void ScrollConfigTo(int offset)
+    internal void ScrollSettingsTo(int offset)
     {
-        _tabConfig.AutoScrollPosition = new Point(0, Math.Max(0, offset));
+        _settingsScroll.AutoScrollPosition = new Point(0, Math.Max(0, offset));
     }
 }

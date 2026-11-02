@@ -23,8 +23,8 @@ namespace LynkSign.WinForms.Ui;
 /// </summary>
 internal sealed class InputField : Panel
 {
-    private const int PadX = 14;
-    private const int PadY = 10;
+    private const int PadX = 12;
+    private const int PadY = 9;
     private const int LineHeight = 19;
 
     private readonly TextBox _box;
@@ -55,7 +55,10 @@ internal sealed class InputField : Panel
             Multiline = multiline,
             WordWrap = multiline,
             AcceptsReturn = multiline,
-            ScrollBars = multiline ? ScrollBars.Vertical : ScrollBars.None,
+            // 多行框也不带原生滚动条：那根白底 + 上下箭头压在浅灰填充块里，
+            // 比输入框本身还抢眼；而它属于非客户区，藏不住也裁不掉。
+            // 文本超长时靠光标跟随 / 滚轮照常能翻，功能不受影响。
+            ScrollBars = ScrollBars.None,
             UseSystemPasswordChar = password,
         };
 
@@ -77,17 +80,21 @@ internal sealed class InputField : Panel
 
         if (multiline)
         {
-            // 多行 TextBox 会自己画一根滚动条（白底 + 上下箭头），压在浅灰的填充块里
-            // 比输入框本身还显眼。
+            // 多行 TextBox 会自己画一根滚动条（白底 + 上下箭头），压在浅灰填充块里很显眼。
             //
-            // 不去"藏"它（Edit 控件在滚轮/按键/改尺寸后会把 WS_VSCROLL 装回去，
-            // 藏一次的后果就是滚两下白条又冒出来，变成两根）。这里垫一层承载框，
-            // 把文本框加宽整整一根滚动条，多出来的那截被承载框裁在可视区之外。
+            // 试过把它"推出可视区"（文本框加宽一整根条宽、让父容器裁掉多出来的那截）：
+            // Edit 控件的那根条属于非客户区，既不吃父窗口裁剪、也不吃自己的 Region，
+            // 加宽之后它直接画到输入框外面的白底上，露出孤零零的上下两个箭头 ——
+            // 比"条在框里"难看得多。所以这里退一步：条留在框内，靠浅灰底色压住它。
+            Padding = new Padding(PadX, PadY, PadX, PadY);
+
             _clip = new Panel
             {
                 BackColor = Theme.FieldBg,
                 Margin = Padding.Empty,
+                Dock = DockStyle.Fill,
             };
+
             _clip.Controls.Add(_box);
             Controls.Add(_clip);
         }
@@ -168,16 +175,14 @@ internal sealed class InputField : Panel
 
         if (_clip is not null)
         {
-            // 多行：承载框就是文字的可见区；文本框加宽一根原生滚动条，
-            // 多出来的那截（原生条）落在承载框之外，被它裁掉，界面上只剩自己画的那根。
-            _clip.Bounds = inner;
+            // 多行：承载框本身就是文字的可见区（位置由 Dock + Padding 决定），
+            // 文本框铺满它，原生滚动条落在框内 —— 见构造函数里那段说明。
+            _box.Bounds = new Rectangle(
+                0,
+                0,
+                Math.Max(0, _clip.ClientSize.Width),
+                Math.Max(0, _clip.ClientSize.Height));
 
-            _box.Bounds = new Rectangle(0, 0, inner.Width, inner.Height);
-
-            var pad = _box.IsHandleCreated ? Math.Max(0, _box.Width - _box.ClientSize.Width) : 0;
-            if (pad <= 0) pad = SystemInformation.VerticalScrollBarWidth;
-
-            _box.Bounds = new Rectangle(0, 0, inner.Width + pad, inner.Height);
             return;
         }
 
@@ -206,6 +211,7 @@ internal sealed class InputField : Panel
         else
         {
             Theme.FillRound(g, r, Theme.FieldRadius, Theme.FieldBg);
+            Theme.DrawRound(g, r, Theme.FieldRadius, Theme.CardBorder);
         }
     }
 }

@@ -57,6 +57,12 @@ internal sealed class StatusPill : Control
         }
     }
 
+    /// <summary>
+    /// 单独指定圆点颜色（"空闲"这种状态：文字是灰的、点仍是绿的）。
+    /// 不指定就跟随 <see cref="Tone"/>。
+    /// </summary>
+    public Color? DotTone { get; set; }
+
     /// <summary>胶囊底色。</summary>
     public Color Fill
     {
@@ -105,7 +111,7 @@ internal sealed class StatusPill : Control
         Theme.FillRound(g, r, Height / 2F, _fill);
 
         var dotY = Height / 2F;
-        using (var dot = new SolidBrush(_tone))
+        using (var dot = new SolidBrush(DotTone ?? _tone))
         {
             g.FillEllipse(dot, PadX, dotY - DotSize / 2F, DotSize, DotSize);
         }

@@ -14,9 +14,8 @@ namespace LynkSign.WinForms.Ui;
 /// <para>
 /// <b>排版上的一个坑</b>：大字号文字必须用「按点绘制」的重载
 /// （<c>DrawText(g, text, font, Point, …)</c>），不能用「按矩形绘制」的重载。
-/// 矩形版会把文字硬塞进给定高度里，20pt 的字塞进 30px 的框会把字形底部裁掉 ——
+/// 矩形版会把文字硬塞进给定高度里，24pt 的字塞进 30px 的框会把字形底部裁掉 ——
 /// 「已」看起来会变成「コ」。按点绘制则始终按字体自身的行高排版，不会裁剪。
-/// 整个内容块再按实际行高算出总高、在卡片内垂直居中，这样改字号也不会画崩。
 /// </para>
 ///
 /// <para>
@@ -25,21 +24,24 @@ namespace LynkSign.WinForms.Ui;
 /// </para>
 ///
 /// <para>
-/// <see cref="Text"/> 与 <see cref="Control.ForeColor"/> 被映射到内容上，
-/// 因此调用方仍然可以像操作 Label 一样写 <c>card.Text = "…"</c> / <c>card.ForeColor = …</c>。
+/// 三种外观：白卡（默认）、<see cref="Tint"/> 染色卡（今日签到按状态染绿/染红）、
+/// <see cref="Dark"/> 深色卡（积分余额是四张里唯一"数据最重"的那张，用深色压住视线）。
 /// </para>
 /// </summary>
 internal sealed class MetricCard : Control
 {
     private const int PadX = 18;
     private const int PadY = 16;
-    private const int CaptionToValue = 8;
-    private const int ValueToHint = 5;
+    private const int CaptionToValue = 10;
+    private const int ValueToHint = 6;
 
     private string _value = "—";
     private string _caption = "";
     private string _unit = "";
     private string _hint = "";
+    private string _badge = "";
+    private string _corner = "";
+    private bool _dark;
 
     public MetricCard()
     {
@@ -56,7 +58,7 @@ internal sealed class MetricCard : Control
         Height = Height1Line;
     }
 
-    /// <summary>带底部说明文字时的卡片高度（够放 20pt 大字 + 两行小字）。</summary>
+    /// <summary>带底部说明文字时的卡片高度。</summary>
     public static int Height1Line =>
         PadY * 2 + Theme.Small.Height + CaptionToValue + Theme.Metric.Height + ValueToHint + Theme.Small.Height;
 
@@ -110,6 +112,31 @@ internal sealed class MetricCard : Control
         }
     }
 
+    /// <summary>右上角的小徽标（如补签卡的「充足」）。空字符串 = 不画。</summary>
+    public string Badge
+    {
+        get => _badge;
+        set
+        {
+            _badge = value ?? "";
+            Invalidate();
+        }
+    }
+
+    /// <summary>徽标的语气色（默认警示橙）。</summary>
+    public Color BadgeTone { get; set; } = Theme.Warning;
+
+    /// <summary>右上角的一枚淡色小字（如今日签到时间「08:00」）。空字符串 = 不画。</summary>
+    public string Corner
+    {
+        get => _corner;
+        set
+        {
+            _corner = value ?? "";
+            Invalidate();
+        }
+    }
+
     private Color? _tint;
 
     /// <summary>
@@ -129,6 +156,20 @@ internal sealed class MetricCard : Control
     /// <summary>染色卡片的描边色；不指定则用默认淡灰。</summary>
     public Color? TintBorder { get; set; }
 
+    /// <summary>深色卡（积分余额）。深色时标题/说明自动换成浅色。</summary>
+    public bool Dark
+    {
+        get => _dark;
+        set
+        {
+            _dark = value;
+            Invalidate();
+        }
+    }
+
+    /// <summary>右下角的小柱状走势（传 null 则不画）。长度建议 8~14。</summary>
+    public int[]? Spark { get; set; }
+
     /// <summary>与 <see cref="Value"/> 同义，方便沿用原来的 Label 写法。</summary>
     [AllowNull]
     public override string Text
@@ -145,7 +186,11 @@ internal sealed class MetricCard : Control
 
         var r = new RectangleF(0.5F, 0.5F, Width - 1F, Height - 1F);
 
-        if (Tint is { } tint)
+        if (Dark)
+        {
+            Theme.DrawCardFilled(g, r, Theme.CardRadius, Theme.RailBg, Theme.DarkBorder);
+        }
+        else if (Tint is { } tint)
         {
             Theme.DrawCardFilled(g, r, Theme.CardRadius, tint, TintBorder ?? Theme.CardBorder);
         }
@@ -153,6 +198,10 @@ internal sealed class MetricCard : Control
         {
             Theme.DrawCard(g, r);
         }
+
+        var captionColor = Dark ? Theme.OnDarkMuted : Theme.TextMuted;
+        var hintColor = Dark ? Theme.OnDarkFaint : Theme.TextFaint;
+        var valueColor = Dark ? Theme.OnDark : ForeColor;
 
         var captionH = Theme.Small.Height;
         var valueH = Theme.Metric.Height;
@@ -170,48 +219,96 @@ internal sealed class MetricCard : Control
         if (!string.IsNullOrEmpty(_caption))
         {
             TextRenderer.DrawText(
-                g,
-                _caption,
-                Theme.Small,
-                new Point(PadX, captionY),
-                Theme.TextMuted,
-                TextFormatFlags.NoPadding);
+                g, _caption, Theme.Small, new Point(PadX, captionY), captionColor, TextFormatFlags.NoPadding);
+        }
+
+        // ---- 右上角徽标 ----
+        if (!string.IsNullOrEmpty(_badge))
+        {
+            var w = TextRenderer.MeasureText(
+                _badge, Theme.Small, new Size(int.MaxValue, int.MaxValue), TextFormatFlags.NoPadding).Width + 14;
+
+            var badgeRect = new RectangleF(Width - PadX - w, captionY - 4, w, Theme.Small.Height + 6);
+            Theme.FillRound(g, badgeRect, 6F, Dark ? Color.FromArgb(0x2A, 0x24, 0x18) : Theme.WarningSoft);
+            Theme.DrawRound(g, badgeRect, 6F, Dark ? Color.FromArgb(0x3A, 0x31, 0x22) : Theme.WarningBorder);
+
+            TextRenderer.DrawText(
+                g, _badge, Theme.Small, Rectangle.Round(badgeRect),
+                Dark ? Theme.LogWarn : BadgeTone,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+        }
+
+        // ---- 右上角的小字（时间）----
+        if (!string.IsNullOrEmpty(_corner))
+        {
+            TextRenderer.DrawText(
+                g, _corner, Theme.MonoSmall,
+                new Rectangle(PadX, captionY - 1, Width - PadX * 2, Theme.Small.Height + 2),
+                Dark ? Theme.OnDarkFaint : Theme.TextFaint,
+                TextFormatFlags.Right | TextFormatFlags.NoPadding);
         }
 
         // ---- 大数字/大字 ----
-        TextRenderer.DrawText(g, _value, Theme.Metric, new Point(PadX, valueY), ForeColor, TextFormatFlags.NoPadding);
+        TextRenderer.DrawText(g, _value, Theme.Metric, new Point(PadX, valueY), valueColor, TextFormatFlags.NoPadding);
+
+        var valueWidth = TextRenderer.MeasureText(
+            g, _value, Theme.Metric, new Size(int.MaxValue, int.MaxValue), TextFormatFlags.NoPadding).Width;
 
         if (!string.IsNullOrEmpty(_unit))
         {
-            var valueWidth = TextRenderer.MeasureText(
-                g,
-                _value,
-                Theme.Metric,
-                new Size(int.MaxValue, int.MaxValue),
-                TextFormatFlags.NoPadding).Width;
-
             // 单位与大字底部对齐，视觉上像一条基线
             var unitY = valueY + valueH - Theme.Base.Height - 2;
 
             TextRenderer.DrawText(
-                g,
-                _unit,
-                Theme.Base,
-                new Point(PadX + valueWidth + 6, unitY),
-                Theme.TextMuted,
-                TextFormatFlags.NoPadding);
+                g, _unit, Theme.Base, new Point(PadX + valueWidth + 6, unitY),
+                Dark ? Theme.OnDarkMuted : Theme.TextMuted, TextFormatFlags.NoPadding);
+        }
+
+        // ---- 走势小柱 ----
+        if (Spark is { Length: > 1 } spark)
+        {
+            DrawSpark(g, spark, valueY + valueH - 22, 22);
         }
 
         // ---- 底部说明 ----
         if (hasHint)
         {
             TextRenderer.DrawText(
-                g,
-                _hint,
-                Theme.Small,
-                new Point(PadX, valueY + valueH + ValueToHint),
-                Theme.TextFaint,
-                TextFormatFlags.NoPadding);
+                g, _hint, Theme.Small, new Point(PadX, valueY + valueH + ValueToHint),
+                hintColor, TextFormatFlags.NoPadding);
+        }
+    }
+
+    /// <summary>
+    /// 右下角的迷你柱状图：只表达"最近几次的趋势"，没有坐标轴、没有数值。
+    /// 用最少的数据墨水换一个"这是在波动"的直觉，超出卡片情绪的部分一律不画。
+    /// </summary>
+    private void DrawSpark(Graphics g, int[] values, float bottom, float height)
+    {
+        // 只画最近 7 个点：点数再多就退化成"条形码"，趋势反而看不出来。
+        if (values.Length > 7) values = values[^7..];
+
+        const int barWidth = 4;
+        const int gap = 5;
+
+        var max = values.Max();
+        if (max <= 0) max = 1;
+
+        var total = values.Length * barWidth + (values.Length - 1) * gap;
+        var x = Width - PadX - total;
+
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+
+        var baseColor = Dark ? Theme.AccentLight : Theme.Mix(Theme.AccentLight, Color.White, 0.55);
+        var hotColor = Dark ? Theme.AccentLight : Theme.Accent;
+
+        for (var i = 0; i < values.Length; i++)
+        {
+            var h = Math.Max(3F, height * values[i] / max);
+            var color = i == values.Length - 1 ? hotColor : baseColor;
+
+            Theme.FillRound(g, new RectangleF(x, bottom - h, barWidth, h), 1.5F, color);
+            x += barWidth + gap;
         }
     }
 }

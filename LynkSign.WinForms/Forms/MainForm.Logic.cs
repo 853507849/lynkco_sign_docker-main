@@ -28,6 +28,9 @@ internal sealed partial class MainForm
     /// </summary>
     private static Regex StatusPattern => SignStatusLine.Pattern;
 
+    /// <summary>最近一次账户快照（喂「账户」卡与积分余额卡）。</summary>
+    private AccountSnapshot? _account;
+
     // ==================================================================
     //  启动
     // ==================================================================
@@ -38,6 +41,7 @@ internal sealed partial class MainForm
         _configPath = configPath;
 
         _sbDataDir.Text = $"数据目录：{dataDir}";
+        if (_dataDirValue is not null) _dataDirValue.Text = dataDir;
 
         EnqueueLog($"[INFO] 数据目录: {dataDir}");
         EnqueueLog($"[INFO] 配置文件: {configPath}{(created ? "  (首次运行, 已生成默认配置)" : "")}");
@@ -52,14 +56,12 @@ internal sealed partial class MainForm
         RestoreStatusFromLatestLog();
         RefreshPoints(force: true);
         RefreshStatus();
+        RefreshHistory();
         StartScheduler();
 
         EnqueueLog("[INFO] 就绪。填好 refreshToken 后点「立即签到」试跑一次，之后按 cron 自动执行。");
 
-        if (_startMinimized)
-        {
-            HideToTray();
-        }
+        if (_startMinimized) HideToTray();
     }
 
     // ==================================================================
@@ -83,9 +85,7 @@ internal sealed partial class MainForm
     /// <para>
     /// <b>默认值和记忆值走同一条换算路径</b>，这点很关键：构造期设的 <c>ClientSize</c>
     /// 不会被 <c>AutoScaleMode.Dpi</c> 缩放（没有设计器基准），所以它是"设备像素"；
-    /// 而这里统一按"逻辑像素 × 缩放比"落地。两条路径单位不一致的话，
-    /// 用户第一次把窗口拖到和默认值差不多大，重启后窗口会突然涨成 1.5 倍（高 DPI 下），
-    /// 看起来就像"尺寸记错了"。
+    /// 而这里统一按"逻辑像素 × 缩放比"落地。
     /// </para>
     /// </summary>
     private void RestoreWindowState()
@@ -95,7 +95,6 @@ internal sealed partial class MainForm
         var state = UiStateStore.Load();
         var remembered = state.WindowWidth > 0 && state.WindowHeight > 0;
 
-        // 屏幕工作区是设备像素，记忆值是逻辑像素 —— 先换算再夹取，否则高 DPI 下会夹不住。
         var work = Screen.PrimaryScreen?.WorkingArea.Size ?? Size.Empty;
         var logicalWork = work.IsEmpty
             ? new Size(UiStateStore.MaxSide, UiStateStore.MaxSide)
@@ -125,8 +124,6 @@ internal sealed partial class MainForm
     {
         if (!_rememberWindowSize) return;
 
-        // 最大化时 ClientSize 是屏幕大小而不是用户调的尺寸，必须用最后一次 Normal 的值，
-        // 否则下次「还原窗口」会莫名其妙炸成整屏。
         var normal = _lastNormalClientSize.IsEmpty ? ClientSize : _lastNormalClientSize;
         if (normal.IsEmpty) return;
 
@@ -162,47 +159,58 @@ internal sealed partial class MainForm
         _loadingConfig = true;
         try
         {
-            var cfg = _host.Config.Read();
-            var push = cfg.Push ?? new PushConfig();
-
-            _txtRefreshToken.Text = cfg.RefreshToken;
-            _txtDeviceId.Text = cfg.DeviceId;
-            _txtCaNativeKey.Text = cfg.CaNativeKey;
-            _txtCaNativeSecret.Text = cfg.CaNativeSecret;
-            _txtCron.Text = cfg.Cron;
-            _txtContentId.Text = cfg.ShareContentId;
-
-            // 一个两态配置值 ↔ 一个勾选框
-            _chkAutoArticleId.Checked = ShareContentModes.Parse(cfg.ShareContentMode) == ShareContentMode.Auto;
-
-            _chkAutoShare.Checked = cfg.AutoShare;
-
-            // 一个三态配置值 ↔ 两个勾选框，换算集中在一处
-            LoadOpenShareUrl(cfg.OpenShareUrl);
-
-            _txtTokenB.Text = string.Join(Environment.NewLine, cfg.TokenB ?? []);
-
-            _txtWecom.Text = push.WecomWebhook;
-            _txtDingtalk.Text = push.DingtalkWebhook;
-            _txtFeishu.Text = push.FeishuWebhook;
-            _txtTgBotToken.Text = push.TgBotToken;
-            _txtTgChatId.Text = push.TgChatId;
-            _txtServerChan.Text = push.ServerChanKey;
-            _txtPushPlus.Text = push.PushPlusToken;
-            _txtBark.Text = push.BarkUrl;
-            _txtHttpProxy.Text = cfg.HttpProxy;
-
-            var autostart = WinAutostart.IsEnabled;
-            _chkAutostart.Checked = autostart;
-            _trayAutostart.Checked = autostart;
-
-            UpdateCronPreview();
+            FillForm(_host.Config.Read());
         }
         finally
         {
             _loadingConfig = false;
         }
     }
+
+    /// <summary>把一份配置填进表单（不落盘）。</summary>
+    private void FillForm(AppConfig cfg)
+    {
+        var push = cfg.Push ?? new PushConfig();
+
+        _txtRefreshToken.Text = cfg.RefreshToken;
+        _txtDeviceId.Text = cfg.DeviceId;
+        _txtCaNativeKey.Text = cfg.CaNativeKey;
+        _txtCaNativeSecret.Text = cfg.CaNativeSecret;
+        _txtCron.Text = cfg.Cron;
+        _txtContentId.Text = cfg.ShareContentId;
+
+        // 一个两态配置值 ↔ 一个开关
+        _chkAutoArticleId.Checked = ShareContentModes.Parse(cfg.ShareContentMode) == ShareContentMode.Auto;
+
+        _chkAutoShare.Checked = cfg.AutoShare;
+
+        // 一个三态配置值 ↔ 两个开关，换算集中在一处
+        LoadOpenShareUrl(cfg.OpenShareUrl);
+
+        _txtTokenB.Text = string.Join(Environment.NewLine, cfg.TokenB ?? []);
+
+        _txtWecom.Text = push.WecomWebhook;
+        _txtDingtalk.Text = push.DingtalkWebhook;
+        _txtFeishu.Text = push.FeishuWebhook;
+        _txtTgBotToken.Text = push.TgBotToken;
+        _txtTgChatId.Text = push.TgChatId;
+        _txtServerChan.Text = push.ServerChanKey;
+        _txtPushPlus.Text = push.PushPlusToken;
+        _txtBark.Text = push.BarkUrl;
+
+        LoadProxyMode(cfg.HttpProxy);
+
+        var autostart = WinAutostart.IsEnabled;
+        _chkAutostart.Checked = autostart;
+        _trayAutostart.Checked = autostart;
+
+        UpdateCronPreview();
+    }
+
+    private static string Tail(string token) => token.Length <= 4 ? token : token[^4..];
+
+    private static string Shorten(string? text, int max)
+        => string.IsNullOrEmpty(text) ? "—" : text.Length <= max ? text : text[..max] + "…";
 
     /// <summary>把界面上的值写回 config.json。返回是否成功。</summary>
     private bool SaveConfigFromForm(bool showFeedback)
@@ -221,7 +229,7 @@ internal sealed partial class MainForm
                 TokenB = [.. _txtTokenB.Lines.Select(l => l.Trim()).Where(l => l.Length > 0)],
                 ShareContentId = _txtContentId.Text.Trim(),
                 ShareContentMode = (_chkAutoArticleId.Checked ? ShareContentMode.Auto : ShareContentMode.Fixed).ToConfigValue(),
-                HttpProxy = _txtHttpProxy.Text.Trim(),
+                HttpProxy = CurrentProxyValue(),
                 Push = new PushConfig
                 {
                     WecomWebhook = _txtWecom.Text.Trim(),
@@ -242,6 +250,13 @@ internal sealed partial class MainForm
                 var saved = _host.Config.Read();
                 EnqueueLog($"[OK] 配置已保存: {_configPath}");
                 EnqueueLog($"[INFO] 下次运行: {CronSchedule.NextText(saved.Cron) ?? "cron 表达式无效"}");
+
+                if (_saveHint is not null)
+                {
+                    _saveHint.Text = $"已保存 · {DateTime.Now:HH:mm:ss}";
+                    _saveHint.ForeColor = Theme.Success;
+                }
+
                 RefreshStatus();
             }
 
@@ -250,6 +265,12 @@ internal sealed partial class MainForm
         catch (Exception ex)
         {
             EnqueueLog($"[X] 保存配置失败: {ex.Message}");
+
+            if (_saveHint is not null)
+            {
+                _saveHint.Text = $"保存失败 · {ex.Message}";
+                _saveHint.ForeColor = Theme.Danger;
+            }
 
             if (showFeedback)
             {
@@ -261,15 +282,15 @@ internal sealed partial class MainForm
     }
 
     // ==================================================================
-    //  签到后自动打开分享链接（一个三态配置值 ↔ 两个勾选框）
+    //  签到后自动打开分享链接（一个三态配置值 ↔ 两个开关）
     // ==================================================================
 
     /// <summary>
-    /// 两个勾选框当前的组合换算成三态配置值。
+    /// 两个开关当前的组合换算成三态配置值。
     ///
     /// <para>
-    /// 第二档只在第一档勾着时才有意义，所以「第二档勾着但第一档没勾」= 不打开 ——
-    /// 这样用户临时关掉自动打开、过两天再打开时，不用把「定时任务也打开」重新勾一遍。
+    /// 第二档只在第一档开着时才有意义，所以「第二档开着但第一档没开」= 不打开 ——
+    /// 这样用户临时关掉自动打开、过两天再打开时，不用把「定时任务也打开」重新开一遍。
     /// </para>
     /// </summary>
     private ShareUrlOpenMode CurrentOpenShareUrl()
@@ -278,7 +299,7 @@ internal sealed partial class MainForm
         return _chkOpenShareAlways.Checked ? ShareUrlOpenMode.Always : ShareUrlOpenMode.Manual;
     }
 
-    /// <summary>把配置里的三态值回填到两个勾选框（含第二档的可用状态）。</summary>
+    /// <summary>把配置里的三态值回填到两个开关（含第二档的可用状态）。</summary>
     private void LoadOpenShareUrl(string? raw)
     {
         var mode = ShareUrlOpenModes.Parse(raw);
@@ -297,12 +318,14 @@ internal sealed partial class MainForm
 
     private void UpdateCronPreview()
     {
+        if (_cronPreview is null) return;
+
         var expr = _txtCron.Text.Trim();
 
         if (CronExpression.TryParse(expr, out _))
         {
             _cronPreview.ForeColor = Theme.TextMuted;
-            _cronPreview.Text = $"下次运行：{CronSchedule.NextText(expr) ?? "—"}";
+            _cronPreview.Text = $"下次运行  {CronSchedule.NextText(expr) ?? "—"}";
         }
         else
         {
@@ -349,24 +372,44 @@ internal sealed partial class MainForm
         // 先把界面上的最新配置落盘，保证「改完直接点」用的是新值
         if (!SaveConfigFromForm(showFeedback: false)) return;
 
-        _btnRunNow.Enabled = false;
-        _sbState.Text = "运行中";
+        _runCts?.Dispose();
+        _runCts = new CancellationTokenSource();
+
+        BeginRunning("手动触发");
+
         EnqueueLog(new string('=', 52));
         EnqueueLog($"[INFO] 手动触发签到 · {TimeUtil.Stamp()}");
 
         try
         {
             var options = SettingsResolver.ResolveFromConfig(_host.Config.Read());
-            var outcome = await _host.Runner.RunAsync("manual", options, writeLogFile: true).ConfigureAwait(true);
+            var outcome = await _host.Runner
+                .RunAsync("manual", options, writeLogFile: true, _runCts.Token)
+                .ConfigureAwait(true);
 
             if (outcome.SkippedReason is not null)
             {
                 EnqueueLog($"[!] {outcome.SkippedReason}");
+                _pillRun.SetState("已跳过", Theme.Warning, Theme.WarningSoft);
             }
             else
             {
                 EnqueueLog($"[INFO] 本次运行结束, 退出码 {outcome.ExitCode}, 日志 {outcome.LogName}");
+
+                // 正常跑完 = 五步都走过了，把最后一步也点亮（第 5 步常常是"未启用"）
+                if (outcome.ExitCode == 0)
+                {
+                    _runStep = StepTitles.Length;
+                    _steps.CurrentIndex = StepTitles.Length;
+                    _steps.Invalidate();
+                    _runProgress.Value = 1;
+                    _runStepText.Text = $"{StepTitles.Length} / {StepTitles.Length} 步骤 · 100%";
+                }
             }
+        }
+        catch (OperationCanceledException)
+        {
+            EnqueueLog("[!] 已取消本次签到");
         }
         catch (Exception ex)
         {
@@ -374,8 +417,53 @@ internal sealed partial class MainForm
         }
         finally
         {
-            _btnRunNow.Enabled = true;
+            _btnCancel.Enabled = false;
             RefreshStatus();
+            RefreshPoints(force: true);
+            RefreshHistory();
+            UpdateRunningChrome();
+        }
+    }
+
+    /// <summary>
+    /// 「刷新状态」图标按钮：只读地拉一次 <c>day/info</c> 与账户信息。
+    ///
+    /// <para>
+    /// 与「立即签到」分开，是因为它们的目的完全不同 —— 这个动作<b>不会真的签到</b>，
+    /// 只是把界面上的数字（今天签没签、连续几天、积分多少）对齐到服务端。
+    /// </para>
+    /// </summary>
+    private async void OnRefreshStatusClick()
+    {
+        if (_host.State.Running)
+        {
+            EnqueueLog("[!] 任务正在运行，等它跑完再刷新状态");
+            return;
+        }
+
+        _btnRefresh.Enabled = false;
+        try
+        {
+            EnqueueLog(new string('=', 52));
+            EnqueueLog("[INFO] 手动刷新签到状态（只读：不签到、不推送）...");
+
+            var outcome = await _host.Runner
+                .RunStatusRefreshAsync("manual-refresh", writeLogFile: false)
+                .ConfigureAwait(true);
+
+            if (outcome.SkippedReason is { } reason) EnqueueLog($"[!] {reason}");
+            else EnqueueLog($"[OK] 状态刷新完成, 退出码 {outcome.ExitCode}");
+        }
+        catch (Exception ex)
+        {
+            CrashReport.Show(ex, "刷新签到状态");
+        }
+        finally
+        {
+            _btnRefresh.Enabled = true;
+            RefreshStatus();
+            RefreshPoints(force: true);
+            RefreshHistory();
         }
     }
 
@@ -386,6 +474,12 @@ internal sealed partial class MainForm
             var removed = _host.TokenCache.Clear();
             EnqueueLog($"[OK] accessToken 缓存已清空: {removed}");
             EnqueueLog("[INFO] 下次签到会强制走一次 refresh 换取新 token。");
+
+            if (_saveHint is not null)
+            {
+                _saveHint.Text = $"token 缓存已清空（{removed}）";
+                _saveHint.ForeColor = Theme.TextMuted;
+            }
         }
         catch (Exception ex)
         {
@@ -404,10 +498,7 @@ internal sealed partial class MainForm
             Multiselect = false,
         };
 
-        if (dialog.ShowDialog(this) == DialogResult.OK)
-        {
-            ApplyHarImport(dialog.FileName);
-        }
+        if (dialog.ShowDialog(this) == DialogResult.OK) ApplyHarImport(dialog.FileName);
     }
 
     /// <summary>
@@ -470,20 +561,37 @@ internal sealed partial class MainForm
             EnqueueLog($"[!] 抓包里有 {scan.MatchedEntries} 条登录记录, 已采用最后一条（最新那次登录）");
 
         EnqueueLog($"[INFO] 已写入 {_configPath}");
-        EnqueueLog("[INFO] 可以点「立即签到」试跑一次了");
         EnqueueLog("[!] 抓包文件里含明文 token, 导入完成后建议把它删掉");
 
         RefreshStatus();
         return true;
     }
 
-    /// <summary>更新「从抓包导入」按钮旁边那行结果文本。</summary>
+    /// <summary>
+    /// 导入结果的即时回显：写在「导入文件」按钮左边，几秒后自己清空。
+    /// 不弹 MessageBox —— 导入是高频动作，每次都点「确定」很烦。
+    /// </summary>
     private void SetHarPreview(string text, Color color)
     {
-        if (IsDisposed) return;
+        if (IsDisposed || _importEcho is null) return;
 
-        _harPreview.Text = text;
-        _harPreview.ForeColor = color;
+        _importEcho.Text = text;
+        _importEcho.ForeColor = color;
+
+        _echoTimer ??= new System.Windows.Forms.Timer { Interval = 8000 };
+        _echoTimer.Stop();
+        _echoTimer.Tick -= OnEchoTimeout;
+        _echoTimer.Tick += OnEchoTimeout;
+        _echoTimer.Start();
+    }
+
+    private void OnEchoTimeout(object? sender, EventArgs e)
+    {
+        _echoTimer?.Stop();
+
+        if (IsDisposed || _importEcho is null || _importEcho.IsDisposed) return;
+
+        _importEcho.Text = "";
     }
 
     /// <summary>
@@ -491,9 +599,8 @@ internal sealed partial class MainForm
     ///
     /// <para>
     /// 纯诊断动作：<b>不改配置（除了必要的 token 轮换写回）、不执行签到</b>。
-    /// 值得单独做个按钮的理由和「验证密钥」一样 —— 这个功能依赖第三方接口的返回结构
-    /// （哪一层是文章流、articleId 叫什么、分页参数要不要带），结构一变就取不到文章；
-    /// 而「取不到」在签到流程里只会静默回退到配置里的旧 id，日志上完全看不出异常。
+    /// 值得单独做个按钮的理由和「验证密钥」一样 —— 这个功能依赖第三方接口的返回结构，
+    /// 结构一变就取不到文章；而「取不到」在签到流程里只会静默回退到配置里的旧 id。
     /// </para>
     /// </summary>
     private async void OnFetchArticleClick(object? sender, EventArgs e)
@@ -519,7 +626,6 @@ internal sealed partial class MainForm
                 return;
             }
 
-            // 取文章同样要先有 accessToken —— 复用签到那条「缓存 → refresh」链路。
             using var log = new ConsoleJobLogger();
             var token = await _host.Tokens
                 .GetAccessTokenAsync(options.RefreshToken, options.DeviceId, log, force: false, CancellationToken.None)
@@ -568,9 +674,7 @@ internal sealed partial class MainForm
     ///
     /// <para>
     /// <see cref="TokenManager"/> 只把轮换结果写进 <b>缓存</b>，写回配置文件这一步一直是
-    /// <see cref="SignJob"/> 负责的。「拉取一次」也走了 refresh，所以必须照做一遍：
-    /// 否则新 token 只活在缓存里，配置里还是旧的 —— 下次签到虽然能从缓存自愈，
-    /// 但那期间只要清一次缓存、或者把配置拷到别的机器，就会拿一个已失效的旧 token 去换。
+    /// <see cref="SignJob"/> 负责的。「拉取一次」也走了 refresh，所以必须照做一遍。
     /// </para>
     /// </summary>
     private void WriteBackRotatedToken(string currentRefreshToken, TokenResult token)
@@ -607,16 +711,10 @@ internal sealed partial class MainForm
     /// <summary>
     /// 「验证密钥」：用假 token 向签到端点发一次探测请求，判断原生通道密钥对不对。
     ///
-    /// <para>
-    /// 纯诊断动作，<b>不会真的签到</b> —— 探测用的 token 是假的，后端拿不到用户身份。
-    /// 之所以值得单独做个按钮：原生通道的 secret 只能人工从 App 安装包里挖，
-    /// 挖错了不会有任何即时反馈，只能等下一次签到跑挂，而那时已经白丢一天。
-    /// </para>
+    /// <para>纯诊断动作，<b>不会真的签到</b> —— 探测用的 token 是假的，后端拿不到用户身份。</para>
     /// </summary>
     private async void OnVerifyNativeSecretClick(object? sender, EventArgs e)
     {
-        // 先把界面上的最新值落盘：用户多半是「粘贴 → 直接点验证」，
-        // 不落盘的话验证的会是上一版密钥。
         if (!SaveConfigFromForm(showFeedback: false)) return;
 
         _btnVerifyNative.Enabled = false;
@@ -630,8 +728,6 @@ internal sealed partial class MainForm
             var profile = options.NativeProfile();
             var result = await NativeChannelProbe.RunAsync(_host.Api, profile).ConfigureAwait(true);
 
-            // 报告正文逐行灌进日志框，用户在哪儿点的就在哪儿看到结论，
-            // 不用再去翻数据目录里的文件。
             foreach (var line in NativeChannelProbe.Format(result, profile)
                          .Split('\n', StringSplitOptions.RemoveEmptyEntries))
             {
@@ -659,16 +755,11 @@ internal sealed partial class MainForm
         var want = _chkAutostart.Checked;
         var (ok, info) = want ? WinAutostart.Install() : WinAutostart.Uninstall();
 
-        if (ok)
-        {
-            EnqueueLog($"[OK] 开机自启{(want ? "已开启" : "已关闭")}: {info}");
-        }
-        else
-        {
-            EnqueueLog($"[!] 开机自启设置失败: {info}");
-        }
+        EnqueueLog(ok
+            ? $"[OK] 开机自启{(want ? "已开启" : "已关闭")}: {info}"
+            : $"[!] 开机自启设置失败: {info}");
 
-        // 无论成败都以注册表的真实状态为准回填界面，避免「勾了但没生效」
+        // 无论成败都以注册表的真实状态为准回填界面，避免「开了但没生效」
         var actual = WinAutostart.IsEnabled;
         _loadingConfig = true;
         try
@@ -682,7 +773,7 @@ internal sealed partial class MainForm
         }
     }
 
-    /// <summary>托盘菜单里的「开机自动启动」：翻转勾选状态，由 CheckedChanged 统一处理。</summary>
+    /// <summary>托盘菜单里的「开机自动启动」：翻转开关状态，由 CheckedChanged 统一处理。</summary>
     private void OnTrayAutostartClick(object? sender, EventArgs e)
         => _chkAutostart.Checked = !WinAutostart.IsEnabled;
 
@@ -698,12 +789,16 @@ internal sealed partial class MainForm
         {
             var cfg = _host.Config.Read();
             var state = _host.State;
+            var now = TimeUtil.Now();
 
-            _valNext.Text = CronSchedule.NextText(cfg.Cron) ?? "cron 表达式无效";
-            _valNext.ForeColor = Theme.TextBody;
+            // ---- 运行计划 ----
+            var next = CronSchedule.Next(cfg.Cron, now);
 
-            _valRefresh.Text = $"每天 {SignScheduler.DailyRefreshTime:HH\\:mm} 自动拉一次（只读，不签到）";
-            _valRefresh.ForeColor = Theme.TextMuted;
+            _valNext.Text = next?.ToString("yyyy-MM-dd HH:mm:ss") ?? "cron 表达式无效";
+            _valNext.ForeColor = next is null ? Theme.Danger : Theme.TextStrong;
+
+            _valRefresh.Text = $"每天 {SignScheduler.DailyRefreshTime:HH\\:mm} · 只读";
+            _valRefresh.ForeColor = Theme.TextBody;
 
             if (state.LastFinish is null)
             {
@@ -713,27 +808,79 @@ internal sealed partial class MainForm
             else
             {
                 var rc = state.LastRc;
-                _valLast.Text = $"{state.LastFinish}   {(rc == 0 ? "成功" : $"失败 (退出码 {rc})")}   {state.LastLog}";
+                _valLast.Text = state.LastFinish;
                 _valLast.ForeColor = rc == 0 ? Theme.Success : Theme.Danger;
             }
 
-            _cardRuntime.Value = state.Running ? "运行中" : "空闲";
-            _cardRuntime.ForeColor = state.Running ? Theme.Warning : Theme.TextStrong;
-            _cardRuntime.Tint = state.Running ? Theme.WarningSoft : null;
-            _cardRuntime.TintBorder = state.Running ? Theme.WarningBorder : null;
-            _cardRuntime.Hint = state.Running ? "正在执行签到，请稍候…" : "每 20 秒检查一次 cron";
+            if (_planCard is not null) _planCard.Note = $"cron {cfg.Cron}";
 
-            _pillState.SetState(
-                state.Running ? "运行中" : "空闲",
-                state.Running ? Theme.Warning : Theme.Success,
-                state.Running ? Theme.WarningSoft : Theme.SuccessSoft);
+            // 页头副标题：日期 + 上次运行。设计稿里标题下面那行小字就是它 ——
+            // 打开界面第一眼就能知道"今天几号、上一次跑得怎么样"，不用再去点日志。
+            if (_hdrStatus is not null)
+            {
+                var today = TimeUtil.Now();
+                var week = "日一二三四五六"[(int)today.DayOfWeek];
+                var last = state.LastFinish is null
+                    ? "本次会话尚未运行"
+                    : state.LastRc switch
+                    {
+                        null => $"上次运行 {state.LastFinish}",
+                        0 => $"上次运行 {state.LastFinish} 成功",
+                        var rc => $"上次运行 {state.LastFinish} 失败 · {rc}",
+                    };
 
-            _sbState.Text = state.Running ? "运行中…" : "就绪";
+                _hdrStatus.Subtitle = $"{today:yyyy-MM-dd} 周{week} · {last}";
+            }
+
+            // 日志卡底部那行：当前最新的一份日志。放在这里跟着刷新走，
+            // 是因为它会随着每次运行、每天零点换文件而变，写死在启动时刻就过期了。
+            if (_logPath is not null)
+            {
+                var newest = _host.Logs.NewestName();
+                var label = newest is null ? "logs" : "logs/" + newest;
+                if (_logPath.Text != label) _logPath.Text = label;
+            }
+
+            if (next is { } due)
+            {
+                var left = due - now;
+                _planCountdown.Caption = left > TimeSpan.Zero
+                    ? $"距下次签到 {left:hh\\:mm\\:ss}"
+                    : "即将开始";
+                _planCountdown.Tone = Theme.TextBody;
+            }
+            else
+            {
+                _planCountdown.Caption = "没有下一次 · 请检查 cron 表达式";
+                _planCountdown.Tone = Theme.Danger;
+            }
+
+            // ---- 运行状态 ----
+            if (state.Running)
+            {
+                _pillState.SetState($"运行中 · 步骤 {Math.Max(1, _runStep)} / {StepTitles.Length}",
+                    Theme.Accent, Theme.AccentSoft);
+                _pillState.DotTone = Theme.Accent;
+            }
+            else
+            {
+                _pillState.SetState("空闲 · 等待调度", Theme.TextMuted, Theme.ChipBg);
+                _pillState.DotTone = Theme.Success;
+            }
+
+            _btnRunNow.Text = state.Running ? "签到中…" : "立即签到";
             _btnRunNow.Enabled = !state.Running;
+
+            _btnRunBusy.Text = state.Running ? "签到中" : "签到完成";
+            _btnRunBusy.Enabled = false;
+            if (!state.Running) _btnCancel.Enabled = false;
+
+            _sbState.Text = BuildStatusText(state, next);
 
             // 积分历史是文件驱动的（签到流程与每日刷新都会往里追加），
             // 靠文件指纹判断要不要重读 —— 没变就一个字节都不碰。
             RefreshPoints();
+            UpdateRunningChrome();
         }
         catch
         {
@@ -741,18 +888,29 @@ internal sealed partial class MainForm
         }
     }
 
+    /// <summary>右下角那行：版本 / 运行时 / 状态 / 下次时间，全部用等宽字体。</summary>
+    private string BuildStatusText(JobState state, DateTime? next)
+    {
+        var version = typeof(MainForm).Assembly.GetName().Version;
+        var versionText = version is null ? "v?" : $"v{version.Major}.{version.Minor}.{version.Build}";
+
+        var mode = state.Running ? "运行中" : "就绪";
+        var nextText = next is { } n ? $"下次 {n:HH:mm:ss}" : "cron 无效";
+
+        return $"{versionText} · .NET {Environment.Version.Major} · {mode} · {nextText}";
+    }
+
     /// <summary>
     /// 启动时从最近的日志里恢复「今天签没签」与账户数值，这样重启程序也能看到上次结果。
     ///
     /// <para>
     /// 从最新一份往回找，<b>找到第一份含状态行的就用</b>，而不是只看最新那一份 ——
-    /// 一次失败的运行（比如 token 过期）也会落一份日志，里面只有「拿不到 accessToken」；
-    /// 只看最新就会让卡片在重启后空成一片「—」，而更早那份日志里的状态其实还好好的。
+    /// 一次失败的运行（比如 token 过期）也会落一份日志，里面只有「拿不到 accessToken」。
     /// </para>
     /// </summary>
     private void RestoreStatusFromLatestLog()
     {
-        const int scanLimit = 10;   // 一次启动最多回看这么多份，避免日志多时白读一堆文件
+        const int scanLimit = 10;
 
         try
         {
@@ -767,11 +925,10 @@ internal sealed partial class MainForm
 
                 // 一次运行里「签到前 / 签到后复核」可能各打一条，后打的才反映签到后的真实状态
                 var matches = StatusPattern.Matches(text);
-                if (matches.Count == 0) continue;   // 这份日志里没有签到状态，往前再找一份
+                if (matches.Count == 0) continue;
 
                 ApplySignStatus(matches[^1]);
 
-                // 账户行同理（取最后一条 = 复核后的那次）
                 var accountMatches = AccountLine.Pattern.Matches(text);
                 if (accountMatches.Count > 0 && AccountLine.Parse(accountMatches[^1].Value) is { } account)
                 {
@@ -800,14 +957,27 @@ internal sealed partial class MainForm
             if (IsDisposed) return;
 
             _cardToday.Value = signed ? "已签到" : "未签到";
-            _cardToday.ForeColor = signed ? Theme.Success : Theme.Danger;
+            _cardToday.ForeColor = signed ? Theme.Accent : Theme.Danger;
             // 整张卡染成状态色：四张卡里它是唯一会变的那张，也是最该被一眼看到的那张
             _cardToday.Tint = signed ? Theme.SuccessSoft : Theme.DangerSoft;
             _cardToday.TintBorder = signed ? Theme.SuccessBorder : Theme.DangerBorder;
             _cardToday.Hint = signed ? "今天已完成，无需再签" : "还没签到，等下次运行";
+            _cardToday.Corner = _host.State.LastFinish is { Length: >= 16 } finish ? finish[11..16] : "";
 
             _cardStreak.Value = streak;
             _cardCards.Value = cards;
+
+            var count = int.TryParse(cards, out var n) ? n : 0;
+            _cardCards.Badge = count >= 3 ? "充足" : count > 0 ? "紧张" : "无";
+            _cardCards.BadgeTone = count >= 3 ? Theme.Warning : Theme.Danger;
+
+            _cardsText = cards;
+            if (int.TryParse(streak, out var streakDays)) _streakDays = streakDays;
+            _signedToday = signed;
+
+            if (_accountCard is not null) _accountCard.Invalidate();
+
+            if (_pageHistory is { Visible: true }) RefreshHistory();
         }
 
         if (IsHandleCreated && InvokeRequired)
@@ -827,26 +997,34 @@ internal sealed partial class MainForm
     }
 
     // ==================================================================
-    //  账户积分 / 积分变化
+    //  账户积分
     // ==================================================================
 
-    /// <summary>
-    /// 变化列表最多列出的条数（更早的记录仍在 <c>points-history.log</c> 里）。
-    /// 给个上限是为了不让「读文件 + 重绘」随历史无限增长。
-    /// </summary>
+    /// <summary>变化列表最多读出的条数（更早的记录仍在 <c>points-history.log</c> 里）。</summary>
     private const int MaxPointsListed = 60;
 
-    /// <summary>把账户行解析出的四个值填进「账户积分」卡（可跨线程调用）。</summary>
+    /// <summary>把账户行解析出的四个值填进「账户」卡与积分余额指标卡（可跨线程调用）。</summary>
     private void ApplyAccount(AccountSnapshot account)
     {
         void Apply()
         {
-            if (IsDisposed || _valPoint is null) return;
+            if (IsDisposed || _accountCard is null) return;
 
-            _valPoint.Text = ShowOrDash(account.Point);
-            _valIncome.Text = ShowOrDash(account.Income);
-            _valLevel.Text = ShowOrDash(account.Level);
-            _valGrowth.Text = ShowOrDash(account.Growth);
+            _account = account;
+
+            _accountCard.Point = ShowOrDash(account.Point);
+            _accountCard.Income = ShowOrDash(account.Income);
+            _accountCard.Level = ShowOrDash(account.Level);
+            _accountCard.Growth = ShowOrDash(account.Growth);
+
+            var token = _host.Config.Read().RefreshToken?.Trim() ?? "";
+            _accountCard.TokenTail = token.Length >= 4 ? Tail(token) : "";
+            _accountCard.DeviceId = _host.Config.Read().DeviceId ?? "";
+
+            _cardPoints.Value = ShowOrDash(account.Point);
+            _cardPoints.Hint = $"累计 {ShowOrDash(account.Income)} · 成长 {ShowOrDash(account.Growth)} · {ShowOrDash(account.Level)}";
+
+            if (_pageHistory is { Visible: true }) RefreshHistory();
         }
 
         if (IsHandleCreated && InvokeRequired)
@@ -865,12 +1043,13 @@ internal sealed partial class MainForm
         Apply();
     }
 
+    private long _pointsStamp = long.MinValue;
+
     /// <summary>
-    /// 读积分变化历史并刷新「积分变化」列表。
+    /// 读积分历史并刷新账户卡 / 积分余额卡的走势。
     ///
     /// <para>
-    /// 每 2 秒被状态定时器叫一次，所以先比文件指纹：没动就一个字节都不读、一次重绘都不做 ——
-    /// 否则用户滚到列表中间，2 秒后会被弹回顶部。
+    /// 每 2 秒被状态定时器叫一次，所以先比文件指纹：没动就一个字节都不读、一次重绘都不做。
     /// </para>
     /// </summary>
     /// <param name="force">忽略指纹缓存强制读一次（启动时用）。</param>
@@ -878,8 +1057,6 @@ internal sealed partial class MainForm
     {
         try
         {
-            if (_pointsBox is null) return;
-
             var store = _host.Points;
             var stamp = store.Stamp();
             if (!force && stamp == _pointsStamp) return;
@@ -887,8 +1064,7 @@ internal sealed partial class MainForm
 
             var records = store.Read(MaxPointsListed);
 
-            // 勾选「用历史里的最新值兜住账户卡」：重启后第一眼就该看到上次的积分，
-            // 而不是一排「—」等下次运行。只有这条确实带了数字才覆盖。
+            // 重启后第一眼就该看到上次的积分，而不是一排「—」等下次运行。
             var latest = records.Count > 0 ? records[0] : null;
             if (latest is not null && (latest.Point is not null || latest.Income is not null || latest.Growth is not null))
             {
@@ -902,163 +1078,22 @@ internal sealed partial class MainForm
                 });
             }
 
-            RenderPoints(records);
+            // 积分余额卡右下角的迷你柱：最近 12 次观察到的积分值（时间正序）
+            var spark = records
+                .Where(r => r.Point is not null)
+                .Take(12)
+                .Select(r => r.Point!.Value)
+                .Reverse()
+                .ToArray();
+
+            _cardPoints.Spark = spark.Length > 1 ? spark : null;
+
+            if (_pageHistory is { Visible: true }) RefreshHistory();
         }
         catch
         {
             // 读历史失败不该影响别的任何功能
         }
-    }
-
-    private void RenderPoints(List<PointsRecord> records)
-    {
-        if (IsDisposed) return;
-
-        var changed = records.Where(r => r.HasChange).ToList();
-
-        void Apply()
-        {
-            if (IsDisposed || _pointsBox is null) return;
-
-            _pointsBox.SuspendLayout();
-            try
-            {
-                _pointsBox.Clear();
-
-                if (changed.Count == 0)
-                {
-                    var tip = records.Count == 0
-                        ? "还没有积分记录 —— 跑一次签到、或等每天 00:01 的自动刷新后就有了"
-                        : $"最近 {records.Count} 次检查积分都没变（最近一次 {records[0].ShortTime}）";
-                    AppendPointsLine(tip, Theme.TextFaint);
-                    return;
-                }
-
-                foreach (var record in changed)
-                {
-                    AppendPointsRuns(PointsRuns(record));
-                }
-
-                // 最新的在最上面：追加写入会把视图带到末尾（最老的那条），
-                // 而这张卡的用途是"最近有没有加分"，一进来就该看见今天。
-                // 只在文件真的变了时才走到这里，所以不会每 2 秒把用户滚到一半的位置弹回顶部。
-                _pointsBox.SelectionStart = 0;
-                _pointsBox.SelectionLength = 0;
-                _pointsBox.ScrollToCaret();
-            }
-            finally
-            {
-                _pointsBox.ResumeLayout();
-            }
-        }
-
-        if (IsHandleCreated && InvokeRequired)
-        {
-            try
-            {
-                BeginInvoke(Apply);
-            }
-            catch (InvalidOperationException)
-            {
-                // 窗口正在销毁
-            }
-            return;
-        }
-
-        Apply();
-    }
-
-    private void AppendPointsLine(string text, Color color)
-        => AppendPointsRuns([(text, color)]);
-
-    /// <summary>
-    /// 按"时间(淡) / 增量(彩色) / 当前值(正文) / 触发方式(淡)"分段写入一行。
-    ///
-    /// <para>
-    /// 整行一个颜色时，绿色会把时间戳和当前值一起染绿，一屏扫下去全是色块；
-    /// 拆成段落之后，眼睛只要找绿色的那几个 "+5" 就够了。
-    /// </para>
-    /// </summary>
-    private void AppendPointsRuns(IEnumerable<(string Text, Color Color)> runs)
-    {
-        foreach (var (text, color) in runs)
-        {
-            _pointsBox.SelectionStart = _pointsBox.TextLength;
-            _pointsBox.SelectionLength = 0;
-            _pointsBox.SelectionColor = color;
-            _pointsBox.AppendText(text);
-        }
-
-        _pointsBox.SelectionColor = _pointsBox.ForeColor;
-        _pointsBox.AppendText(Environment.NewLine);
-    }
-
-    /// <summary>
-    /// 一条变化的单行摘要，例如
-    /// <c>10-13 09:06  +5 积分 → 123  +5 成长值 → 460  [manual]</c>。
-    ///
-    /// <para>
-    /// 增量写在最前面、当前值跟在箭头后面：光看增量看不出量级，只写当前值又看不出涨了多少。
-    /// </para>
-    ///
-    /// <para>
-    /// <b>同时变化时最多列两项</b>：「累计获得」与「积分余额」在签到场景下总是同增同减
-    /// （签到一次两边都 +5），三项全列出来只会把一行撑到折行 —— 而折行之后这个列表就没法扫读了。
-    /// 只在它俩都没变、独独累计变了时才把它顶上来。
-    /// </para>
-    /// </summary>
-    internal static string FormatPointsChange(PointsRecord record)
-        => string.Concat(PointsRuns(record).Select(run => run.Text));
-
-    /// <summary>
-    /// 一条变化按"时间 / 增量 / 当前值 / 触发方式"切成若干着色片段。
-    ///
-    /// <para>
-    /// 增量写成最前面的 <c>+5 积分</c>、当前值跟在箭头后面：光看增量看不出量级，
-    /// 只写当前值又看不出涨了多少。两者都要，但只有增量该着色 —— 满屏彩色等于没重点。
-    /// </para>
-    /// </summary>
-    private static List<(string Text, Color Color)> PointsRuns(PointsRecord record)
-    {
-        var color = DeltaColor(record);
-        var runs = new List<(string Text, Color Color)> { (record.ShortTime + "  ", Theme.TextFaint) };
-
-        var any = false;
-        Add("积分", record.DeltaPoint, record.Point);
-        Add("成长值", record.DeltaGrowth, record.Growth);
-        if (!any) Add("累计", record.DeltaIncome, record.Income);
-
-        runs.Add(("  " + TriggerLabel(record.Trigger), Theme.TextFaint));
-        return runs;
-
-        void Add(string name, int? delta, int? current)
-        {
-            if (delta is not { } d || d == 0) return;
-            if (any) runs.Add(("  ", Theme.TextBody));
-
-            any = true;
-            runs.Add(($"{d:+#;-#;0} {name}", color));
-            runs.Add(($" → {current?.ToString() ?? "?"}", Theme.TextBody));
-        }
-    }
-
-    /// <summary>
-    /// 触发方式 → 列表里那个两字标记。用中文而不是 <c>[manual]</c> 那样的原文：
-    /// 这行本来就贴着折行的边，四五个半角字符换掉就是 20~30 像素，足以决定折不折。
-    /// </summary>
-    private static string TriggerLabel(string trigger) => trigger switch
-    {
-        "manual" => "手动",
-        "cron" => "定时",
-        "status" => "刷新",
-        _ => trigger,
-    };
-
-    /// <summary>涨用绿、跌用红（这是积分不是股票，不套「A 股红涨绿跌」那套）。</summary>
-    private static Color DeltaColor(PointsRecord record)
-    {
-        var sum = (record.DeltaPoint ?? 0) + (record.DeltaIncome ?? 0) + (record.DeltaGrowth ?? 0);
-        return sum > 0 ? Theme.Success : sum < 0 ? Theme.Danger : Theme.TextBody;
     }
 
     /// <summary>接口没返回时显示「—」；那个占位符「-」看起来像「填了个横杠」而不是缺数据。</summary>
@@ -1088,10 +1123,12 @@ internal sealed partial class MainForm
         // 未显示的窗体访问 Handle 只会 CreateHandle，不会把窗口弹出来。
         _ = Handle;
 
-        lines.Add($"界面构建: 顶层控件={Controls.Count}, 页签={_tabs.Items.Count}, 页面={_pageHost.Controls.Count}, 日志框句柄={(_logBox.IsHandleCreated ? "已建" : "未建")}");
-        ok &= _tabs.Items.Count == 2
-            && _pageHost.Controls.Contains(_tabStatus)
-            && _pageHost.Controls.Contains(_tabConfig);
+        lines.Add($"界面构建: 导航项={_nav.Items.Count}, 页面={_pageHost.Controls.Count}, 日志框句柄={(_logBox.IsHandleCreated ? "已建" : "未建")}");
+        ok &= _nav.Items.Count == 4
+            && _pageHost.Controls.Contains(_pageStatus)
+            && _pageHost.Controls.Contains(_pageRunning)
+            && _pageHost.Controls.Contains(_pageHistory)
+            && _pageHost.Controls.Contains(_pageSettings);
 
         Control?[] inputs =
         [
@@ -1099,21 +1136,22 @@ internal sealed partial class MainForm
             _txtWecom, _txtDingtalk, _txtFeishu, _txtTgBotToken, _txtTgChatId,
             _txtServerChan, _txtPushPlus, _txtBark, _chkAutoShare, _chkAutostart,
             _txtCaNativeKey, _txtCaNativeSecret, _chkShowNativeSecret, _btnVerifyNative,
-            _chkOpenShareUrl, _chkOpenShareAlways,
+            _chkOpenShareUrl, _chkOpenShareAlways, _segProxy,
             _chkAutoArticleId, _btnFetchArticle, _articlePreview,
-            _btnImportHar, _harPreview,
-            _valPoint, _valIncome, _valLevel, _valGrowth, _pointsBox,
+            _btnImportHar, _importEcho, _dataDirValue,
         ];
         var bound = inputs.Count(c => c is not null);
         lines.Add($"控件绑定: 配置控件 {bound}/{inputs.Length}, 托盘菜单 {_tray.ContextMenuStrip?.Items.Count ?? 0} 项");
         ok &= bound == inputs.Length && _tray.ContextMenuStrip is not null;
 
         // 自绘外观是否真的建起来了（缺一个就是界面会缺一块）
-        MetricCard?[] metrics = [_cardToday, _cardStreak, _cardCards, _cardRuntime];
+        MetricCard?[] metrics = [_cardToday, _cardStreak, _cardCards, _cardPoints];
         var metricCount = metrics.Count(c => c is not null);
         lines.Add($"外观: 指标卡 {metricCount}/{metrics.Length}, 状态胶囊={(_pillState is null ? "缺失" : "有")}, "
-            + $"主按钮={(_btnRunNow is null ? "缺失" : "有")}, 页签条={_tabs.GetType().Name}");
-        ok &= metricCount == metrics.Length && _pillState is not null && _btnRunNow is not null;
+            + $"主按钮={(_btnRunNow is null ? "缺失" : "有")}, 导航={_nav.GetType().Name}, "
+            + $"月历={(_calendar is null ? "缺失" : "有")}, 步骤={_steps?.StepCount ?? 0}");
+        ok &= metricCount == metrics.Length && _pillState is not null && _btnRunNow is not null
+              && _calendar is not null && _steps is not null && _accountCard is not null;
 
         // 1) Console 重定向 → 日志队列 → RichTextBox
         const string probe = "selftest: console redirect probe";
@@ -1125,8 +1163,6 @@ internal sealed partial class MainForm
         ok &= hit;
 
         // 2) 细滚动条：Attach 会走一遍 GetScrollInfo + ShowScrollBar（隐藏原生滚动条）。
-        //    这两步是本机 P/Invoke，签名写错了会直接抛 —— 而它挂在日志框上，
-        //    一崩就是整个界面起不来。所以放进自检里跑一次，不要让用户当第一测试人。
         try
         {
             using (var bar = new SlimScrollBar(Theme.ScrollThumb, Theme.ScrollThumbHover))
@@ -1138,8 +1174,6 @@ internal sealed partial class MainForm
 
             // 原生滚动条现在不是"藏起来"，而是"整个推到宿主可视区外面被裁掉"：
             // 文本框比承载框宽出整整一根原生条，所以文字区（客户区）必须正好等于承载框宽度。
-            //   · 客户区比承载框窄 → 原生条露出来，滚一下就是两根条；
-            //   · 客户区比承载框宽 → 文字铺到细条下面，右边缘的字被压掉。
             var host = _logBox.Parent;
             var pad = _logBox.Width - _logBox.ClientSize.Width;
             var pushedOut = pad > 0 && _logBox.Width > (host?.ClientSize.Width ?? 0);
@@ -1156,7 +1190,14 @@ internal sealed partial class MainForm
             lines.Add($"[X] 细滚动条: {ex.GetType().Name}: {ex.Message}");
         }
 
-        // 2) 配置读写
+        // 2b) 步骤行解析（「签到进行中」页靠它点亮步骤）
+        var stepMatch = StepPattern.Match("[08:00:15] [INFO] [3/5] 执行签到...  POST /up/api/v1/user/sign/upgrade");
+        var stepOk = stepMatch.Success && stepMatch.Groups[1].Value == "3"
+                     && stepMatch.Groups[2].Value.Contains("执行签到", StringComparison.Ordinal);
+        lines.Add($"步骤行解析: [3/5] → {(stepMatch.Success ? stepMatch.Groups[1].Value : "失败")} {(stepOk ? "OK" : "不符")}");
+        ok &= stepOk;
+
+        // 3) 配置读写
         try
         {
             var before = _host.Config.Read();
@@ -1170,15 +1211,13 @@ internal sealed partial class MainForm
             ok = false;
         }
 
-        // 3) cron 解析
+        // 4) cron 解析
         var cron = _host.Config.Read().Cron;
         var next = CronSchedule.NextText(cron);
         lines.Add($"cron 解析: \"{cron}\" → 下次 {next ?? "解析失败"}");
         ok &= next is not null;
 
-        // 4) 签名算法回归 + 原生通道结构不变式
-        //    签名一旦拼错，网关只回一句 400 Invalid Signature，既不说是哪一行错、也不说哪个头错；
-        //    而签名是纯函数，所以用抓包黄金样本把它离线钉住 —— 无网络、无凭据、可长期回归。
+        // 5) 签名算法回归 + 原生通道结构不变式
         var (signOk, signLines) = SignatureSelfCheck.Run();
         lines.AddRange(signLines);
         ok &= signOk;
@@ -1187,76 +1226,56 @@ internal sealed partial class MainForm
         lines.AddRange(nativeLines);
         ok &= nativeOk;
 
-        // 4b) 密钥判别法回归（离线）。
-        //     「400 = secret 错 / 401 = key 错 / 403 = 签名已过但未授权」是整条链路上
-        //     唯一能区分「Key 填错」和「Secret 填错」的依据，措辞和判定顺序被改乱
-        //     就会把用户引到错误方向；而联网测试里很难造出各种网关回应，只能离线钉住。
+        // 5b) 密钥判别法回归（离线）
         var (probeOk, probeLines) = NativeChannelProbe.SelfCheck();
         lines.AddRange(probeLines);
         ok &= probeOk;
 
-        // 4c) 「签到后自动打开分享链接」的取值映射回归（离线）。
-        //     翻错一档不会报错，只会表现为「早上 9 点突然弹浏览器」或者「点了立即签到没反应」，
-        //     所以把取值归一化与触发矩阵都钉在这里。
+        // 5c) 「签到后自动打开分享链接」的取值映射回归（离线）
         lines.Add("分享链接自动打开 (open_share_url): "
             + $"{ShareUrlOpenModes.Parse(_host.Config.Read().OpenShareUrl).Describe()}");
         var (openUrlOk, openUrlLines) = ShareUrlOpenModes.SelfCheck();
         lines.AddRange(openUrlLines);
         ok &= openUrlOk;
 
-        // 4d) 「分享文章 ID 从哪来」的取值映射回归（离线）。同 4c：翻错一档只会表现为
-        //     「配置写了自动、实际一直用固定 id」，要等文章下架后分享静默不加分才发现。
+        // 5d) 「分享文章 ID 从哪来」的取值映射回归（离线）
         lines.Add("分享文章 ID 来源 (share_content_mode): "
             + $"{ShareContentModes.Parse(_host.Config.Read().ShareContentMode).Describe()}");
         var (contentModeOk, contentModeLines) = ShareContentModes.SelfCheck();
         lines.AddRange(contentModeLines);
         ok &= contentModeOk;
 
-        // 4e) 广场响应 → 文章 id 的解析回归（离线）。这段逻辑错了不会抛异常，
-        //     只会取到视频/动态的 id、或者什么都取不到然后静默回退，表现都是分享不加分。
+        // 5e) 广场响应 → 文章 id 的解析回归（离线）
         var (articleOk, articleLines) = ShareArticleFinder.SelfCheck();
         lines.AddRange(articleLines);
         ok &= articleOk;
 
-        // 4f) 抓包 → 登录凭据的解析回归（离线）。同 4e：这段逻辑错了也不会抛异常 ——
-        //     deviceId 取成了 hardwareDeviceId、响应体没解压、取到上一次登录的旧 token，
-        //     表现全都只是"导入完签到 401"，看不出是哪一步取错了。
+        // 5f) 抓包 → 登录凭据的解析回归（离线）
         var (harOk, harLines) = HarCredentialExtractor.SelfCheck();
         lines.AddRange(harLines);
         ok &= harOk;
 
-        // 4g) 窗口尺寸偏好的夹取回归（离线）。夹取写错的表现很隐蔽：换了小屏之后
-        //     窗口大到标题栏跑到屏幕外，用户既拖不动也够不到关闭按钮，只能删
-        //     ui-state.json 自救 —— 这种"自己把自己锁死"的 bug 必须在自检里挡住。
-        //     往返测试用数据目录下的临时文件（不用系统 TEMP：受限环境里 TEMP 可能不可写，
-        //     那会把"环境问题"误报成"代码问题"，自检就没人信了）。
+        // 5g) 窗口尺寸偏好的夹取回归（离线）
         var (uiOk, uiLines) = UiStateStore.SelfCheck(Path.Combine(AppPaths.WorkDir, "_selftest_uistate"));
         lines.AddRange(uiLines);
         ok &= uiOk;
 
-        // 4h) 「签到状态」日志行的生成 ↔ 解析回归（离线）。界面三张状态卡全靠解析这行日志刷新，
-        //     格式与正则一旦对不上，表现只是「签到成功但卡片不动」，不会报任何错。
+        // 5h) 「签到状态」日志行的生成 ↔ 解析回归（离线）
         var (statusLineOk, statusLineLines) = SignStatusLine.SelfCheck();
         lines.AddRange(statusLineLines);
         ok &= statusLineOk;
 
-        // 4i) 「每天 00:01 该不该刷状态」的判定回归（离线）。写反了不会报错，
-        //     只是表现为「再也没自动刷过」或者「每次轮询都刷一次」，两头都很隐蔽。
+        // 5i) 「每天 00:01 该不该刷状态」的判定回归（离线）
         var (dueOk, dueLines) = SignScheduler.SelfCheck();
         lines.AddRange(dueLines);
         ok &= dueOk;
 
-        // 4j) 「账户行」生成 ↔ 解析回归（离线）。「账户积分」卡就靠解析这行日志刷新，
-        //     而写它的是三个不同流程（签到前 / 签到后复核 / 每日刷新）——
-        //     只改其中一处就会让卡片在某些路径下停在旧值，且不报任何错。
+        // 5j) 「账户行」生成 ↔ 解析回归（离线）
         var (accountOk, accountLines) = AccountLine.SelfCheck();
         lines.AddRange(accountLines);
         ok &= accountOk;
 
-        // 4k) 积分变化历史的比对回归（离线）。delta 算错不会抛异常，只会让「积分变化」
-        //     列表静默地少几条（把变化当成没变）或多几条（把「没拿到」当成「掉到 0」）——
-        //     而它正是用户判断「签到到底加没加分」的唯一依据，必须钉住。
-        //     往返测试同样用数据目录下的临时文件（理由见 4g）。
+        // 5k) 积分变化历史的比对回归（离线）
         var (pointsOk, pointsLines) = PointsHistoryStore.SelfCheck(
             Path.Combine(AppPaths.WorkDir, "_selftest_points"));
         lines.AddRange(pointsLines);
@@ -1275,7 +1294,7 @@ internal sealed partial class MainForm
             + $"最小={UiStateStore.MinWidth}x{UiStateStore.MinHeight} (逻辑像素), "
             + $"偏好文件={UiStateStore.FilePath}");
 
-        // 5) 目录
+        // 6) 目录
         lines.Add($"日志目录: {_host.Logs.Dir}（存在={Directory.Exists(_host.Logs.Dir)}）");
         lines.Add($"token 缓存: {_host.TokenCache.Path}");
         ok &= Directory.Exists(_host.Logs.Dir);

@@ -21,7 +21,7 @@ namespace LynkSign.WinForms.Ui;
 internal class CardPanel : Panel
 {
     /// <summary>标题带的净高度（含标题文字与它下面留给内容的一点空隙）。</summary>
-    public const int TitleHeight = 34;
+    public const int TitleHeight = 32;
 
     private string? _title;
     private string? _note;
@@ -37,7 +37,7 @@ internal class CardPanel : Panel
 
         // 圆角外的像素 = 页面底色，于是四角看起来是"镂空"的
         BackColor = Theme.PageBg;
-        Padding = new Padding(Theme.CardPadding);
+        Padding = new Padding(Theme.CardPadding, 18, Theme.CardPadding, 18);
     }
 
     /// <summary>卡片标题。为空则整张卡片就是一个纯容器。</summary>
@@ -125,11 +125,13 @@ internal class CardPanel : Panel
         {
             // 深色卡片上标题要反过来：底色一深，深字就整块糊掉了
             var dark = Theme.IsDark(Fill);
-            var titleColor = dark ? Color.FromArgb(0xEE, 0xF1, 0xF6) : Theme.TextStrong;
-            var noteColor = dark ? Color.FromArgb(0x7C, 0x86, 0x94) : Theme.TextFaint;
+            var titleColor = dark ? Theme.OnDark : Theme.TextStrong;
+            // 深色卡上的备注不能用最暗那档：实测在 #101720 上基本糊成背景
+            var noteColor = dark ? Theme.OnDarkMuted : Theme.TextFaint;
 
             var y = Padding.Top;
-            var textRect = new RectangleF(Padding.Left, y - 2F, Width - Padding.Left - Padding.Right, 20F);
+            var textRect = new RectangleF(
+                Padding.Left, y - 3F, Width - Padding.Left - Padding.Right, Theme.Section.Height + 4F);
 
             TextRenderer.DrawText(
                 g,
