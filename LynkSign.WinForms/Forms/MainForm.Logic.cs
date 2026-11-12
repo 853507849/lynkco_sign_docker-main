@@ -1197,6 +1197,34 @@ internal sealed partial class MainForm
         lines.Add($"步骤行解析: [3/5] → {(stepMatch.Success ? stepMatch.Groups[1].Value : "失败")} {(stepOk ? "OK" : "不符")}");
         ok &= stepOk;
 
+        // 2c) CSV 导出的编码。
+        //     GB18030 在 .NET Core 之后要 RegisterProvider 才有；漏了的表现是
+        //     「点导出 → is not a supported encoding name」，与磁盘权限、路径都无关，
+        //     而且不点导出就永远发现不了 —— 所以钉进自检。
+        var csvEnc = CsvEncoding();
+        var csvRoundTrip = csvEnc.GetString(csvEnc.GetBytes("签到,周三")) == "签到,周三";
+        var csvIsGb18030 = csvEnc.CodePage == 54936;
+
+        // 顺手真的落一次盘再读回：只验 GetEncoding 是不够的，
+        // 用户报的错发生在"写出文件"这个动作上，这条路径得一起覆盖。
+        var csvFileOk = false;
+        try
+        {
+            var csvPath = Path.Combine(Path.GetTempPath(), "lynksign-selftest-csv.csv");
+            File.WriteAllText(csvPath, "日期,星期,状态\r\n2026-11-02,周一,已签到\r\n", csvEnc);
+            csvFileOk = File.ReadAllText(csvPath, csvEnc).Contains("已签到", StringComparison.Ordinal);
+            File.Delete(csvPath);
+        }
+        catch (Exception ex)
+        {
+            lines.Add($"CSV 落盘: {ex.GetType().Name}: {ex.Message}");
+        }
+
+        lines.Add($"CSV 导出编码: {csvEnc.WebName} (CodePage={csvEnc.CodePage}), 中文往返={(csvRoundTrip ? "OK" : "失败")}, "
+            + $"落盘读回={(csvFileOk ? "OK" : "失败")}"
+            + (csvIsGb18030 ? "" : " [!] 未取到 GB18030, 已回落 UTF-8 BOM"));
+        ok &= csvRoundTrip && csvIsGb18030 && csvFileOk;
+
         // 3) 配置读写
         try
         {

@@ -53,6 +53,13 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
+        // ---------- 0) 代码页编码 ----------
+        // GB18030 / GBK 这些代码页编码在 .NET Core 之后**默认不注册**，
+        // 不注册时 GetEncoding("GB18030") 直接抛 ArgumentException（"is not a supported encoding name"）。
+        // 界面上看起来像"导出 CSV 失败"，实际上跟磁盘权限、路径都没关系 ——
+        // 就是这一行漏了。注册是全局一次性的，放在任何业务类型被触碰之前。
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
         // ---------- 1) 数据目录 ----------
         // AppPaths 是静态类，首次访问就把 WorkDir 定死了，所以必须赶在任何业务类型被触碰之前
         // 落到环境变量上（与 Web 版 Program.cs 里同一处讲究）。

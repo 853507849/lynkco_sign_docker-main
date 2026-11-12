@@ -457,6 +457,37 @@ internal sealed partial class MainForm
     }
 
     /// <summary>
+    /// <summary>
+    /// 导出 CSV 用的编码。
+    ///
+    /// <para>
+    /// 首选 GB18030：Excel 双击打开 UTF-8 的中文 CSV 常按 ANSI 猜，直接乱码；
+    /// 而这份文件的第一用途就是"拖进 Excel 给老板看"。GB18030 覆盖了 GBK/GB2312，
+    /// 中文 Windows 上 Excel 认得很准。
+    /// </para>
+    ///
+    /// <para>
+    /// ⚠️ 代码页编码在 .NET Core 之后**默认不注册**，取不到时抛的是
+    /// <see cref="ArgumentException"/>（消息很像"这个编码不存在"）。
+    /// 正常启动时 <c>Program.Main</c> 已经注册过 provider，这里再兜一层，
+    /// 是因为自检、裁剪发布等路径有可能绕过那次注册。拿不到就退回
+    /// **带 BOM 的 UTF-8** —— 现代 Excel 见 BOM 会正确按 UTF-8 解析，
+    /// 总比"点了导出直接报错"强。
+    /// </para>
+    /// </summary>
+    internal static Encoding CsvEncoding()
+    {
+        try
+        {
+            return Encoding.GetEncoding("GB18030");
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException)
+        {
+            return new UTF8Encoding(encoderShouldEmitUTF8Identifier: true);
+        }
+    }
+
+    /// <summary>
     /// 把当前月的签到情况导成 CSV。
     ///
     /// <para>
@@ -493,8 +524,11 @@ internal sealed partial class MainForm
                 sb.AppendLine($"{date:yyyy-MM-dd},{WeekdayName(date.DayOfWeek)},{state}");
             }
 
-            File.WriteAllText(dialog.FileName, sb.ToString(), Encoding.GetEncoding("GB18030"));
-            EnqueueLog($"[OK] 已导出 {first:yyyy-MM} 签到记录: {dialog.FileName}");
+            // 编码只取一次：既用于写盘，也用于日志 —— 万一走了 UTF-8 回落，
+            // 日志里能直接看出来（否则用户只知道"导出成功"，打开还是乱码）。
+            var encoding = CsvEncoding();
+            File.WriteAllText(dialog.FileName, sb.ToString(), encoding);
+            EnqueueLog($"[OK] 已导出 {first:yyyy-MM} 签到记录 ({encoding.WebName}): {dialog.FileName}");
         }
         catch (Exception ex)
         {
